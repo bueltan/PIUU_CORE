@@ -1,0 +1,15 @@
+Pruebas host desde la raíz de Projects:
+
+    bash PIUU_CORE/test/run_host_tests.sh
+
+Compatibilidad con el bridge real, sin abrir red ni importar sus dependencias:
+
+    bash PIUU_CORE/test/run_host_tests.sh '/home/denis/Documents/Wall-e Project/Server Wall-e-PCM-OPUS/src/main.py'
+
+Se compilan módulos de producción con g++ y mocks host de Arduino, FreeRTOS,
+WiFi y Preferences. El runner usa /tmp y limpia sus binarios al salir.
+Ver REFACTOR.md para contratos, cobertura y límites de las simulaciones.
+La cobertura UART incluye interoperabilidad con módulos reales de C3_EARS,
+parser PCM!/EVT!, comandos CMD!, lifecycle touch/wake y worker UART con
+saturación de colas. Ver docs/INTEGRACION_EARS_UART.md para pruebas físicas.
+Estas pruebas no se ejecutan mediante el runner embedded de PlatformIO.

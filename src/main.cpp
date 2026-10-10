@@ -1,0 +1,80 @@
+#include "hardware/app_log.h"
+#include <Arduino.h>
+#include "hardware/display_hal.h"
+#include "hardware/touch_hal.h"
+#include "app/app_services.h"
+#include "app/conversation.h"
+#include "app/conversation_transport.h"
+#include "network/server_link.h"
+#include "audio/audio_downlink.h"
+#include "app/ears_session.h"
+#include "input/touch_input.h"
+#if PIUU_DIAGNOSTICS
+#include "input/ears_link.h"
+#endif
+#include "config/settings.h"
+#include "config/ears_config.h"
+#include <freertos/task.h>
+#include "ui/ui_controller.h"
+#include "ui/ui_model.h"
+#include "ui/ui_status.h"
+#include "ui/app_navigation.h"
+#include "network/wifi_service.h"
+
+void setup() {
+    appLogBegin();
+    delay(800);
+    appLog().printf("[BOOT] udp=v2 ears_rx=%d ears_tx=%d baud=%lu diag=%d\n",
+        EarsConfig::RX_PIN,EarsConfig::TX_PIN,(unsigned long)EarsConfig::BAUD,PIUU_DIAGNOSTICS);
+    initDisplayHardware();
+    initTouchHardware();
+    if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
+    conversationSetTransportPort({serverLinkBeginTurn,serverLinkCancelTurn,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkFinishTurn});
+    appServicesInit();
+    uiControllerInit();
+    if (!conversationInit() || !earsSessionInit() || !startTouchTask() || !wifiServiceStart()) haltWithUiError();
+    wifiServiceRequestConnect(settings().wifi, true);
+}
+void loop() {
+    appServicesPoll();
+    uiStatusHandleEarsNotice(earsSessionPoll());
+    uiControllerPoll();
+    conversationPoll();
+    static uint32_t lastConnectivity=0;
+    if (uint32_t(millis()-lastConnectivity) >= 1000) {
+        lastConnectivity=millis();
+        appServicesRefreshConnectivity();
+        uiStatusRefreshConnectivity();
+    }
+#if PIUU_DIAGNOSTICS
+    static uint32_t lastDiagnostics=0;
+    static uint8_t diagnosticsPhase=0;
+    // Stagger groups: each repeats every five seconds, avoiding a UART burst.
+    if(uint32_t(millis()-lastDiagnostics)>=1000) {
+        lastDiagnostics=millis();
+        switch(diagnosticsPhase) {
+        case 0: {
+        const auto link=earsLinkStats();const auto session=earsSessionStats();
+        appLog().printf("[EARS t=%lu] peer=%d streaming=%d rx=%lu drop=%lu evt_drop=%lu bad=%lu cmd=%lu uplink=%lu gaps=%lu dup=%lu\n",
+            (unsigned long)millis(),earsLinkPeerOnline(),link.remoteStreaming,
+            (unsigned long)link.audioReceived,(unsigned long)link.audioDropped,
+            (unsigned long)link.eventDropped,(unsigned long)link.parseRejected,
+            (unsigned long)link.commandsSent,(unsigned long)session.forwarded,
+            (unsigned long)session.sequenceGaps,(unsigned long)session.duplicates);
+        break;
+        }
+        case 1: serverLinkLogDiagnostics();break;
+        case 2: audioDownlinkLogDiagnostics();break;
+        case 3: audioDownlinkLogStacks();break;
+        case 4:
+        appLog().printf("[RESOURCE t=%lu] heap=%lu min_heap=%lu max_block=%lu loop_hwm_bytes=%lu\n",
+            (unsigned long)millis(),(unsigned long)ESP.getFreeHeap(),(unsigned long)ESP.getMinFreeHeap(),
+            (unsigned long)ESP.getMaxAllocHeap(),(unsigned long)uxTaskGetStackHighWaterMark(nullptr));
+        break;
+        }
+        diagnosticsPhase=(diagnosticsPhase+1)%5;
+    }
+#endif
+    uiStatusRefreshStartScreen();
+    delay(20);
+}
