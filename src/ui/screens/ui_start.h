@@ -13,6 +13,7 @@ enum UiState
 {
     UI_READY,
     UI_LISTENING,
+    UI_CONNECTING,
     UI_THINKING,
     UI_SPEAKING,
     UI_ERROR

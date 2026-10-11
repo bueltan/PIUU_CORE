@@ -140,10 +140,11 @@ static const char *uiStateToButtonLabel(UiState state)
     {
     case UI_LISTENING:
         return "STOP";
+    case UI_CONNECTING:
     case UI_THINKING:
-        return "WAIT";
+        return "STOP";
     case UI_SPEAKING:
-        return "MIC";
+        return "STOP";
     case UI_ERROR:
         return "ERR";
     case UI_READY:
@@ -401,7 +402,11 @@ void uiStartApplyState(UiState state)
         break;
 
     case UI_LISTENING:
-        drawStatusText("Listening", "Tap MIC again to send");
+        drawStatusText("Listening", "Tap MIC to close");
+        break;
+
+    case UI_CONNECTING:
+        drawStatusText("Connecting", "Tap MIC to close");
         break;
 
     case UI_THINKING:

@@ -13,4 +13,4 @@ for data in (source.read_bytes()[:37],source.read_bytes()+b'X',b'PCM!'+source.re
     except ValueError: pass
     else: raise AssertionError('Malformed envelope accepted')
 target.write_bytes(wire.encode(wire.Packet(wire.Kind.NACK,0,wire.Identity(1,2,9,0),7,b'\0\0\0\5\0\3')))
-print('PASS: C++/Python v2 identities, endian layout, NACK and malformed envelopes')
+print('PASS: C++/Python v3 identities, endian layout, NACK and malformed envelopes')

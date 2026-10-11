@@ -43,7 +43,8 @@ void uiStatusRefreshStartScreen()
         setErrorLines("No server", "Waiting backend...");
         state = UI_ERROR;
     } else if (conversationState() == ConversationState::Listening) state = UI_LISTENING;
-    else if ((conversationState() == ConversationState::ClosingInput || conversationState() == ConversationState::WaitingResponse)) state = UI_THINKING;
+    else if (conversationState() == ConversationState::Connecting) state = UI_CONNECTING;
+    else if (conversationState() == ConversationState::WaitingResponse) state = UI_THINKING;
     else if (conversationState() == ConversationState::Playing) state = UI_SPEAKING;
 
     if (!dirty && state == presentedState) return;

@@ -2,15 +2,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// UDP v2 envelope. All integers are big endian. Audio bodies retain the existing
+// UDP v3 envelope. All integers are big endian. Audio bodies retain the existing
 // PCM/Opus serialization; naked v1 datagrams are never accepted on the network.
 namespace SessionProtocol {
 constexpr size_t HEADER_SIZE=38, MAX_BODY=658, MAX_PACKET=HEADER_SIZE+MAX_BODY;
-constexpr uint8_t VERSION=2;
+constexpr uint8_t VERSION=3;
 enum class Kind : uint8_t {
     Hello=1, HelloAck, Start, StartAck, Commit, CommitAck, Cancel, CancelAck,
-    Pcm, Opus, Nack, Missing, Error, Ping, Pong
+    Pcm, Opus, Nack, Missing, Error, Ping, Pong, Event, EventAck, Interrupt, InterruptAck, Played, PlayedAck
 };
+enum class Event : uint8_t { SpeechStarted=1, SpeechStopped, ResponseStarted, Closed, Ready };
+// turn is the conversation ID; response=0 identifies its continuous uplink.
 struct Identity {
     uint64_t client,server;
     uint32_t turn,response;

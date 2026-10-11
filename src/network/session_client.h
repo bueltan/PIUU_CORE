@@ -3,6 +3,11 @@
 // Controller-owned transport state; the RX worker hands controls through a queue.
 class SessionClient {
 public:
+    using EventHandler=uint32_t(*)(SessionProtocol::Event,uint32_t,uint32_t);
+    void setEventHandler(EventHandler handler) { eventHandler=handler; }
+    void setEventReady(bool (*ready)()) { eventReady=ready; }
+    bool interrupt(uint32_t playedMs);
+    void playbackFinished(uint32_t playedMs);
     using Sender=bool(*)(const uint8_t*,size_t);
     using Observer=void(*)(const char*,SessionProtocol::Identity,uint32_t,uint32_t);
     struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0; };
@@ -11,9 +16,8 @@ public:
     void init(uint64_t client,Sender sender);
     void reset();
     bool ready(uint32_t now) const;
-    bool beginTurn();
+    bool beginConversation();
     void cancel(uint32_t playedMs);
-    void finishTurn();
     bool sendBody(const uint8_t*,size_t,uint32_t now);
     void receive(const SessionProtocol::Packet&,uint32_t now);
     void poll(uint32_t now,bool online);
@@ -23,7 +27,7 @@ public:
     static constexpr size_t CACHE_FRAMES=12;
     static constexpr uint32_t CACHE_TTL_MS=240;
     static constexpr uint32_t CONTROL_RETRY_MS=150;
-    static constexpr uint8_t CONTROL_ATTEMPTS=8;
+    static constexpr uint8_t CONTROL_ATTEMPTS=48;
     static constexpr size_t RECOVERY_BUDGET=2;
 private:
     struct Command { SessionProtocol::Kind kind;SessionProtocol::Identity id;uint32_t request;uint8_t body[8];uint16_t size;uint8_t attempts;uint32_t sent; };
@@ -31,6 +35,12 @@ private:
     SessionProtocol::Identity id{};
     Sender sender=nullptr;
     Observer observer=nullptr;
+    EventHandler eventHandler=nullptr;
+    struct EventAck { uint32_t sequence=0,played=0;SessionProtocol::Identity id{}; };
+    EventAck eventAcks[16]{};
+    uint32_t lastEvent=0;
+    bool (*eventReady)()=nullptr;
+    bool awaitingResponseReset=false;
     Stats counters{};
     void reportFor(const char *event,SessionProtocol::Identity identity,uint32_t a=0,uint32_t b=0) {
         if(observer) observer(event,identity,a,b);
@@ -40,7 +50,6 @@ private:
     Frame cache[CACHE_FRAMES]{};size_t cursor=0;
     uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,helloRequest=0;
     bool helloSent=false,pingSent=false,established=false,available=false,started=false,failed=false;
-    uint32_t finalSequence=0,finalPts=0;
     bool emit(SessionProtocol::Kind,SessionProtocol::Identity,uint32_t,const uint8_t*,size_t,uint16_t=0);
     bool queue(SessionProtocol::Kind,const uint8_t*,size_t);
 };

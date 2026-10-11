@@ -27,16 +27,21 @@ Validación del cambio: suite host y compilaciones `cyd`/`cyd2usb` exitosas.
 Ver [integración UART](docs/INTEGRACION_EARS_UART.md) para protocolo, pruebas y límites,
 y [refactor](REFACTOR.md) para la separación de responsabilidades.
 
-## Transporte y cancelación
+## Conversación continua y UDP v3
 
-CORE y backend ahora requieren **UDP v2**: IDs de conexión/turno/respuesta,
-START/COMMIT/CANCEL con ACK y recuperación acotada de PCM por NACK. Touch/wake
-puede interrumpir la respuesta y abrir otro turno. El backend recorta el historial
-según una estimación conservadora de reproducción del DAC.
+Actualizar CORE y backend juntos: **PIU3 / versión 3**. Wake o touch abre una
+conversación; xAI `server_vad` detecta los turnos. El audio sigue transmitiéndose
+durante respuestas. Touch cierra; wake durante respuesta interrumpe. CORE cierra
+tras 30 segundos de silencio esperando una nueva intervención; el backend
+cierra xAI inmediatamente, sin conservar una conexión idle cinco minutos.
 
-Si la recuperación falla, el servidor inserta silencio: 20 ms por frame perdido,
-hasta 200 ms por hueco. Ver el [contrato UDP v2](docs/PROTOCOLO_UDP_V2.md) para
-formato, límites y actualización coordinada de ambos extremos.
+El estado Connecting permite distinguir la apertura de xAI de la escucha normal.
+El backend conserva audio de arranque en un búfer limitado; cada respuesta tiene
+un ID distinto y requiere confirmación antes de comenzar la salida. Se mantienen
+NACK acotado, silencio limitado ante pérdidas y recorte de historial al interrumpir.
+
+Ver [contrato y responsabilidades v3](docs/PROTOCOLO_UDP_V3.md), límites y
+pruebas. El documento v2 queda como referencia histórica.
 
 ## Logs del test integrado
 

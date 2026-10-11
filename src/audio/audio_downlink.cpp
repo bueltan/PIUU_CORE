@@ -87,6 +87,7 @@ static std::atomic<uint32_t> processedEpoch{0};
 static std::atomic_bool expectResponse{false};
 static std::atomic<uint32_t> submittedMediaSamples{0};
 static uint32_t lastMediaWriteMs=0;
+bool audioDownlinkEpochReady() { return processedEpoch.load()==requestedEpoch.load(); }
 uint32_t audioDownlinkPlayedMs() {
     if(processedEpoch.load()!=requestedEpoch.load()) return 0;
     const uint32_t submitted=submittedMediaSamples.load();

@@ -8,11 +8,13 @@ void serverLinkResetHeartbeat();
 bool serverLinkPollHeartbeat(bool online);
 int serverLinkParsePacket();
 int serverLinkRead(uint8_t *data, size_t capacity);
-// Controller-only v2 lifecycle. RX never mutates the session client.
-bool serverLinkBeginTurn();
-void serverLinkCancelTurn(uint32_t playedMs);
+// Controller-only v3 lifecycle. RX never mutates the session client.
+bool serverLinkOpenConversation();
+void serverLinkCloseConversation(uint32_t playedMs);
 bool serverLinkTakeFailure();
 
-void serverLinkFinishTurn();
 
 void serverLinkLogDiagnostics();
+
+void serverLinkPlaybackFinished(uint32_t playedMs);
+bool serverLinkInterrupt(uint32_t playedMs);

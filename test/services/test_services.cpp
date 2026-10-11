@@ -4,6 +4,7 @@
 #include "audio/audio_downlink.h"
 
 #include "app/conversation.h"
+#include "app/conversation_event.h"
 #include "audio/audio_uplink.h"
 #include "network/server_link.h"
 #include "protocol/session_protocol.h"
@@ -22,6 +23,7 @@ const DeviceSettings &settings() { return config; }
 static uint32_t epoch=0;
 static PlaybackEventSink sink=nullptr;
 void audioDownlinkSetEventSink(PlaybackEventSink value) { sink=value; }
+bool audioDownlinkEpochReady() { return true; }
 void audioDownlinkBeginTurn(uint32_t value) { epoch=value; }
 void audioDownlinkExpectResponse() {}
 void audioDownlinkLogDiagnostics() {}
@@ -72,15 +74,16 @@ int main() {
     appServicesPoll();assert(appServicesServerReady());
     uiStatusRefreshStartScreen();assert(drawn==UI_READY);
     const int before=draws;uiStatusRefreshStartScreen();assert(draws==before);
-    assert(conversationStart() && conversationState()==ConversationState::Listening && draws==before);
+    assert(conversationStart() && conversationState()==ConversationState::Connecting && draws==before);
+    uiStatusRefreshStartScreen();assert(drawn==UI_CONNECTING);
+    conversationServerEvent(ConversationEvent::Ready,0,0);
     uiStatusRefreshStartScreen();assert(drawn==UI_LISTENING);
     assert(!conversationStart());
-    uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::ClosingInput && drawn==UI_THINKING);
-    for(int i=0;i<10;++i) { now+=20;conversationPoll(); }
-    assert(!audioUplinkIsClosing());
-    assert(conversationState()==ConversationState::WaitingResponse); assert(sink({epoch,PlaybackEventKind::Started})); conversationPoll();uiStatusRefreshStartScreen();assert(drawn==UI_SPEAKING);
-    assert(conversationToggleInput()==ConversationAction::Busy);
-    assert(sink({epoch,PlaybackEventKind::Finished})); conversationPoll();
+    conversationServerEvent(ConversationEvent::SpeechStopped,0,1);
+    conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    assert(sink({epoch,PlaybackEventKind::Started}));conversationPoll();uiStatusRefreshStartScreen();assert(drawn==UI_SPEAKING);
+    assert(sink({epoch,PlaybackEventKind::Finished}));conversationPoll();assert(conversationState()==ConversationState::Listening);
+    uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Idle && drawn==UI_READY);
     uiModel().screen=SCREEN_WIFI;const int hidden=draws;uiStatusRefreshStartScreen();assert(draws==hidden);
     uiModel().screen=SCREEN_START;uiStatusInvalidate();uiStatusRefreshStartScreen();assert(drawn==UI_READY);
     now+=6001;appServicesPoll();assert(!appServicesServerReady());
@@ -97,7 +100,7 @@ int main() {
     assert(sink({oldEpoch,PlaybackEventKind::Started}));conversationPoll();assert(conversationState()==ConversationState::Idle);
     wifi=true;appServicesRefreshConnectivity();appServicesPoll();pong();appServicesPoll();
     uiStatusSetError("Old failure","Retry");uiStatusRefreshStartScreen();assert(drawn==UI_ERROR);
-    uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Listening && drawn==UI_LISTENING);
+    uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Connecting && drawn==UI_CONNECTING);
     conversationAbort();
     hostStopWorkers();
     puts("PASS: startup retry/idempotence, heartbeat/reconnect/rollover, UI isolation and conversation actions");

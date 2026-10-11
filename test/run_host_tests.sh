@@ -14,6 +14,9 @@ g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/service
 g++ -std=c++11 -Wall -Wextra -I test/services/mocks -I src test/settings/test_settings.cpp src/config/settings.cpp src/storage/storage_prefs.cpp -o "$task_test_dir/settings"
 "$task_test_dir/settings"
 
+g++ -std=c++11 -Wall -Wextra -I src test/silence/test_silence.cpp -o "$task_test_dir/silence"
+"$task_test_dir/silence"
+
 g++ -std=c++11 -Wall -Wextra -I src test/touch/test_gesture.cpp -o "$task_test_dir/gesture"
 "$task_test_dir/gesture"
 
@@ -37,7 +40,7 @@ if [[ $# -gt 0 ]]; then
     backend_main="$1"
     if [[ -d "$backend_main" ]]; then backend_main="$backend_main/src/main.py"; fi
     backend_root="$(dirname "$(dirname "$backend_main")")"
-    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/session_protocol.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
+    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/conversation_protocol.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     "$task_test_dir/session_protocol" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     python3 test/protocol/check_python_bridge.py "$backend_main" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"
     "$task_test_dir/protocol" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"

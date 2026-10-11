@@ -27,21 +27,21 @@ void handleEvent(const EarsEvent &event) {
         (unsigned long)millis(),unsigned(event.code),(unsigned long)event.order,unsigned(event.size),unsigned(conversationState()));
 #endif
     if (event.code==uint8_t(EarsProtocol::Event::Wake)) {
-        if (conversationState()==ConversationState::Listening) return; // Idempotent repeat, preserve turn sequence.
+        if (conversationState()==ConversationState::Listening || conversationState()==ConversationState::Connecting) return; // Idempotent repeat, preserve turn sequence.
 
         wakePending=true;wakeOrder=event.order;
         const bool started=conversationState()==ConversationState::Idle ? conversationStart() : conversationInterrupt();wakePending=false;
         if (!started) stop(); // EARS enabled streaming itself on wake; reject explicitly.
         notice=started ? EarsSessionNotice::Started : EarsSessionNotice::Rejected;
     } else if (event.code==uint8_t(EarsProtocol::Event::Stop)) {
-        conversationEndInput();
+        conversationClose();
     } else {
         ++stats.unknownEvents;
         if (extraSink) extraSink(event.code,event.payload,event.size);
     }
 }
 void handleAudio(const EarsAudioFrame &frame) {
-    if (conversationState()!=ConversationState::Listening || int32_t(frame.order-inputAfter)<=0) return;
+    if (conversationState()==ConversationState::Idle || int32_t(frame.order-inputAfter)<=0) return;
     if (haveSequence) {
         const uint32_t delta=frame.sequence-lastSequence;
         if (!delta) { ++stats.duplicates;return; }
@@ -53,6 +53,7 @@ void handleAudio(const EarsAudioFrame &frame) {
         if (delta>1) { stats.sequenceGaps+=delta-1;audioUplinkSkipFrames(delta-1); }
     }
     haveSequence=true;lastSequence=frame.sequence;
+    conversationObserveAudio(frame.samples,PCM_FRAME_SAMPLES);
     if (audioUplinkSubmitFrame(frame.samples,PCM_FRAME_SAMPLES)) ++stats.forwarded;
 }
 }

@@ -16,12 +16,15 @@ int main() {
     assert(gesture.consume({TouchEdge::Down,10,10,10},3,UINT32_MAX-10,out));
     assert(gesture.consume({TouchEdge::Up,10,10,11},3,UINT32_MAX-10,out));
     ConversationMachine machine;
-    assert(!machine.closeInput());assert(machine.begin());const auto first=machine.epoch();
+    assert(machine.state()==ConversationState::Idle);assert(machine.begin());assert(machine.state()==ConversationState::Connecting);machine.ready();const auto first=machine.epoch();
     machine.playback({first,PlaybackEventKind::Started});assert(machine.state()==ConversationState::Listening);
-    assert(machine.closeInput());assert(!machine.closeInput());machine.inputClosed();
-    machine.playback({first-1,PlaybackEventKind::Finished});assert(machine.state()==ConversationState::WaitingResponse);
-    machine.playback({first,PlaybackEventKind::Finished});assert(machine.state()==ConversationState::Idle); // empty response
-    assert(machine.begin());machine.closeInput();machine.inputClosed();machine.abort();
-    machine.playback({first+1,PlaybackEventKind::Started});assert(machine.state()==ConversationState::Idle);
+    machine.speechStopped();assert(machine.state()==ConversationState::WaitingResponse);
+    machine.responseStarted();const auto response=machine.epoch();
+    machine.playback({first,PlaybackEventKind::Finished});assert(machine.state()==ConversationState::WaitingResponse);
+    machine.playback({response,PlaybackEventKind::Started});assert(machine.state()==ConversationState::Playing);
+    machine.playback({response,PlaybackEventKind::Finished});assert(machine.state()==ConversationState::Listening);
+    machine.responseStarted();machine.speechStarted();
+    machine.playback({response,PlaybackEventKind::Started});assert(machine.state()==ConversationState::Listening);
+    machine.abort();assert(machine.state()==ConversationState::Idle);
     puts("PASS: press/release/cancel, stale gestures, clock rollover, empty response and stale playback epochs");
 }

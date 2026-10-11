@@ -2,6 +2,7 @@
 #include "hardware/app_log.h"
 #include "network/network_udp.h"
 #include "network/session_client.h"
+#include "app/conversation_event.h"
 #include "config/app_config.h"
 #include "config/settings.h"
 #include <freertos/FreeRTOS.h>
@@ -12,17 +13,20 @@
 using namespace SessionProtocol;
 namespace {
 SessionClient client;
+uint32_t handleEvent(SessionProtocol::Event event,uint32_t response,uint32_t utterance) {
+    return conversationServerEvent(ConversationEvent(uint8_t(event)),response,utterance);
+}
 void trace(const char *event,Identity id,uint32_t a,uint32_t b) {
 #if PIUU_DIAGNOSTICS
-    const char *kinds[]={"NONE","HELLO","HELLO_ACK","START","START_ACK","COMMIT","COMMIT_ACK","CANCEL","CANCEL_ACK","PCM","OPUS","NACK","MISSING","ERROR","PING","PONG"};
+    const char *kinds[]={"NONE","HELLO","HELLO_ACK","START","START_ACK","COMMIT","COMMIT_ACK","CANCEL","CANCEL_ACK","PCM","OPUS","NACK","MISSING","ERROR","PING","PONG","EVENT","EVENT_ACK","INTERRUPT","INTERRUPT_ACK","PLAYED","PLAYED_ACK"};
     if(!strncmp(event,"CONTROL",7) || !strncmp(event,"ACK",3)) {
-        appLog().printf("[V2 t=%lu] %s c=%08lx%08lx s=%08lx%08lx turn=%lu resp=%lu kind=%s request=%lu\n",
+        appLog().printf("[V3 t=%lu] %s c=%08lx%08lx s=%08lx%08lx turn=%lu resp=%lu kind=%s request=%lu\n",
             (unsigned long)millis(),event,(unsigned long)(id.client>>32),(unsigned long)id.client,
             (unsigned long)(id.server>>32),(unsigned long)id.server,(unsigned long)id.turn,
-            (unsigned long)id.response,a<16?kinds[a]:"UNKNOWN",(unsigned long)b);
+            (unsigned long)id.response,a<22?kinds[a]:"UNKNOWN",(unsigned long)b);
         return;
     }
-    appLog().printf("[V2 t=%lu] %s c=%08lx%08lx s=%08lx%08lx turn=%lu resp=%lu a=%lu b=%lu\n",
+    appLog().printf("[V3 t=%lu] %s c=%08lx%08lx s=%08lx%08lx turn=%lu resp=%lu a=%lu b=%lu\n",
         (unsigned long)millis(),event,(unsigned long)(id.client>>32),(unsigned long)id.client,
         (unsigned long)(id.server>>32),(unsigned long)id.server,(unsigned long)id.turn,
         (unsigned long)id.response,(unsigned long)a,(unsigned long)b);
@@ -55,7 +59,7 @@ bool serverLinkInit() {
     if(!controls || !networkUdpInit(LOCAL_UDP_PORT)) return false;
     if(!configured) {
         uint64_t nonce=uint64_t(esp_random())<<32|esp_random();
-        client.init(nonce?nonce:1,raw);client.setObserver(trace);configured=true;publish();
+        client.init(nonce?nonce:1,raw);client.setObserver(trace);client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;
 }
@@ -68,9 +72,10 @@ bool serverLinkPollHeartbeat(bool online) {
     client.poll(millis(),online && initialized);publish();
     return online && initialized && client.ready(millis());
 }
-bool serverLinkBeginTurn() { const bool ok=client.beginTurn();publish();return ok; }
-void serverLinkFinishTurn() { client.finishTurn();publish(); }
-void serverLinkCancelTurn(uint32_t playedMs) { client.cancel(playedMs);publish(); }
+bool serverLinkOpenConversation() { const bool ok=client.beginConversation();publish();return ok; }
+void serverLinkPlaybackFinished(uint32_t playedMs) { client.playbackFinished(playedMs);publish(); }
+bool serverLinkInterrupt(uint32_t playedMs) { const bool ok=client.interrupt(playedMs);publish();return ok; }
+void serverLinkCloseConversation(uint32_t playedMs) { client.cancel(playedMs);publish(); }
 bool serverLinkTakeFailure() {
     const bool queuedFailure=overflow.exchange(false);
     const bool sessionFailure=client.takeFailure();
@@ -100,7 +105,7 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
 void serverLinkLogDiagnostics() {
 #if PIUU_DIAGNOSTICS
     const auto s=client.stats();
-    appLog().printf("[V2_STATS t=%lu] turn=%lu pcm_tx=%lu tx_fail=%lu nack=%lu retx=%lu cache_miss=%lu retry=%lu startup_drop=%lu bad_rx=%lu stale_rx=%lu ctrl_drop=%lu\n",
+    appLog().printf("[V3_STATS t=%lu] turn=%lu pcm_tx=%lu tx_fail=%lu nack=%lu retx=%lu cache_miss=%lu retry=%lu startup_drop=%lu bad_rx=%lu stale_rx=%lu ctrl_drop=%lu\n",
         (unsigned long)millis(),(unsigned long)client.identity().turn,(unsigned long)s.pcmSent,
         (unsigned long)s.txFailed,(unsigned long)s.nacks,(unsigned long)s.retransmits,
         (unsigned long)s.cacheMisses,(unsigned long)s.retries,(unsigned long)s.overwritten,

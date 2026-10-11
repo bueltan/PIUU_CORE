@@ -26,24 +26,6 @@ constexpr uint16_t LOCAL_UDP_PORT = 12000;
 // - LOCAL_UDP_PORT can be changed if another service already uses it.
 // - For production, consider moving WiFi credentials out of source code.
 
-// Delay between the last PCM END packet and the COMMIT message.
-// Gives the backend a short moment to receive the final audio packets first.
-constexpr uint32_t COMMIT_DELAY_MS = 80;
-
-// Number of times the END packet is repeated for reliability over UDP.
-constexpr uint8_t PCM_END_REPEAT_COUNT = 3;
-
-// Delay between repeated END packets.
-constexpr uint32_t PCM_END_REPEAT_GAP_MS = 12;
-
-// Recommendation:
-// - 20 ms uplink packets are a safe and common choice for realtime voice.
-// - Smaller packets reduce latency but increase packet overhead and CPU activity.
-// - Larger packets reduce overhead but may increase latency and make losses more noticeable.
-// - COMMIT_DELAY_MS should usually stay below 100 ms for responsive turn closing.
-// - Repeating END packets is useful over UDP; keep 2-3 repeats unless you confirm
-//   the network is extremely stable.
-
 // ============================================================
 // Jitter buffer
 // ============================================================
@@ -107,3 +89,10 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 //   but short enough to return the UI to READY state quickly after the stream ends.
 // - STATS_PERIOD_MS can be lowered while debugging and raised in normal use
 //   to reduce Serial noise.
+#ifndef CONVERSATION_IDLE_TIMEOUT_MS
+#define CONVERSATION_IDLE_TIMEOUT_MS 30000u
+#endif
+
+#ifndef CONVERSATION_ACTIVITY_LEVEL
+#define CONVERSATION_ACTIVITY_LEVEL 160u
+#endif

@@ -24,12 +24,12 @@
 void setup() {
     appLogBegin();
     delay(800);
-    appLog().printf("[BOOT] udp=v2 ears_rx=%d ears_tx=%d baud=%lu diag=%d\n",
+    appLog().printf("[BOOT] udp=v3 ears_rx=%d ears_tx=%d baud=%lu diag=%d\n",
         EarsConfig::RX_PIN,EarsConfig::TX_PIN,(unsigned long)EarsConfig::BAUD,PIUU_DIAGNOSTICS);
     initDisplayHardware();
     initTouchHardware();
     if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
-    conversationSetTransportPort({serverLinkBeginTurn,serverLinkCancelTurn,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkFinishTurn});
+    conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished});
     appServicesInit();
     uiControllerInit();
     if (!conversationInit() || !earsSessionInit() || !startTouchTask() || !wifiServiceStart()) haltWithUiError();
@@ -63,7 +63,7 @@ void loop() {
             (unsigned long)session.sequenceGaps,(unsigned long)session.duplicates);
         break;
         }
-        case 1: serverLinkLogDiagnostics();break;
+        case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
         case 2: audioDownlinkLogDiagnostics();break;
         case 3: audioDownlinkLogStacks();break;
         case 4:

@@ -6,7 +6,8 @@ struct ConversationTransportPort {
     void (*cancel)(uint32_t playedMs);
     bool (*takeFailure)();
     uint32_t (*playedMs)();
-    void (*finish)();
+    bool (*interrupt)(uint32_t playedMs);
+    void (*played)(uint32_t playedMs);
 };
 void conversationSetTransportPort(ConversationTransportPort);
 bool conversationInterrupt();

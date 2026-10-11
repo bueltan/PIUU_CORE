@@ -14,3 +14,6 @@ uint32_t audioDownlinkPlayedMs();
 
 void audioDownlinkLogDiagnostics();
 void audioDownlinkLogStacks();
+
+// Reset has reached the playback worker; safe to acknowledge a new response.
+bool audioDownlinkEpochReady();
