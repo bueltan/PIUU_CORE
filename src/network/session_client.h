@@ -16,6 +16,10 @@ public:
     void init(uint64_t client,Sender sender);
     void reset();
     bool ready(uint32_t now) const;
+    bool reachable(uint32_t now) const;
+    void observeMedia(SessionProtocol::Identity identity,uint32_t now);
+    uint32_t receiveAge(uint32_t now) const { return uint32_t(now-lastReceive); }
+    uint32_t pongAge(uint32_t now) const { return uint32_t(now-lastPong); }
     bool beginConversation();
     void cancel(uint32_t playedMs);
     bool sendBody(const uint8_t*,size_t,uint32_t now);
@@ -48,7 +52,7 @@ private:
     void report(const char *event,uint32_t a=0,uint32_t b=0) { reportFor(event,id,a,b); }
     Command commands[4]{};size_t count=0;
     Frame cache[CACHE_FRAMES]{};size_t cursor=0;
-    uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,helloRequest=0;
+    uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,lastReceive=0,helloRequest=0;
     bool helloSent=false,pingSent=false,established=false,available=false,started=false,failed=false;
     bool emit(SessionProtocol::Kind,SessionProtocol::Identity,uint32_t,const uint8_t*,size_t,uint16_t=0);
     bool queue(SessionProtocol::Kind,const uint8_t*,size_t);

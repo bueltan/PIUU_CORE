@@ -16,6 +16,7 @@ public:
     void speechStopped() { if(state_!=ConversationState::Idle) state_=ConversationState::WaitingResponse; }
     void responseStarted() { if(state_!=ConversationState::Idle) {nextEpoch();state_=ConversationState::WaitingResponse;} }
     void playback(PlaybackEvent event) {
+        if(event.kind==PlaybackEventKind::Failed) return;
         if(event.epoch!=epoch_ || (state_!=ConversationState::WaitingResponse && state_!=ConversationState::Playing)) return;
         state_=event.kind==PlaybackEventKind::Started ? ConversationState::Playing : ConversationState::Listening;
     }

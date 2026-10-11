@@ -86,6 +86,17 @@ int main() {
     uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Idle && drawn==UI_READY);
     uiModel().screen=SCREEN_WIFI;const int hidden=draws;uiStatusRefreshStartScreen();assert(draws==hidden);
     uiModel().screen=SCREEN_START;uiStatusInvalidate();uiStatusRefreshStartScreen();assert(drawn==UI_READY);
+    // A closing backend is reachable but busy, not "No server".
+    SessionProtocol::Packet lastHello{};
+    for(auto it=sent.rbegin();it!=sent.rend();++it) {
+        if(SessionProtocol::decode(it->data(),it->size(),lastHello) && lastHello.kind==SessionProtocol::Kind::Hello) break;
+    }
+    uint8_t busyWire[SessionProtocol::MAX_PACKET];lastHello.id.server=42;
+    auto busySize=SessionProtocol::encode(busyWire,sizeof busyWire,{SessionProtocol::Kind::Pong,0,lastHello.id,0,nullptr,0});
+    incoming.assign(busyWire,busyWire+busySize);uint8_t busyData[64];serverLinkRead(busyData,sizeof busyData);
+    appServicesPoll();assert(appServicesServerReachable()&&!appServicesServerReady());
+    uiStatusRefreshStartScreen();assert(uiModel().errorLine1=="Server busy");
+    pong();appServicesPoll();uiStatusRefreshStartScreen();assert(drawn==UI_READY);
     now+=6001;appServicesPoll();assert(!appServicesServerReady());
     wifi=false;appServicesRefreshConnectivity();assert(!appServicesWifiReady() && appServicesReady());
     wifi=true;appServicesRefreshConnectivity();appServicesPoll();assert(!appServicesServerReady() && starts==2);
@@ -101,6 +112,9 @@ int main() {
     wifi=true;appServicesRefreshConnectivity();appServicesPoll();pong();appServicesPoll();
     uiStatusSetError("Old failure","Retry");uiStatusRefreshStartScreen();assert(drawn==UI_ERROR);
     uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Connecting && drawn==UI_CONNECTING);
+    conversationServerEvent(ConversationEvent::Ready,0,0);
+    conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    assert(sink({epoch,PlaybackEventKind::Failed}));conversationPoll();assert(conversationState()==ConversationState::Idle);
     conversationAbort();
     hostStopWorkers();
     puts("PASS: startup retry/idempotence, heartbeat/reconnect/rollover, UI isolation and conversation actions");

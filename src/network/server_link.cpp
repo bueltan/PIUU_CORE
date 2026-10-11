@@ -38,6 +38,9 @@ QueueHandle_t controls=nullptr;
 struct OwnedControl { Kind kind;uint16_t flags;Identity id;uint32_t sequence;uint16_t size;uint8_t body[64]; };
 std::atomic<uint32_t> revision{0},clientHi{0},clientLo{0},serverHi{0},serverLo{0},turn{0},response{0};
 std::atomic_bool overflow{false};
+Identity receivedMedia{}; // RX worker only
+uint32_t lastMediaNotice=0;
+Identity lastMediaIdentity{};
 bool raw(const uint8_t *data,size_t size) { return networkUdpSendRaw(settings().server.c_str(),SERVER_PORT,data,size); }
 void publish() {
     const auto id=client.identity();++revision;
@@ -65,10 +68,12 @@ bool serverLinkInit() {
 }
 bool serverLinkSend(const uint8_t *data,size_t size) { return initialized && client.sendBody(data,size,millis()); }
 void serverLinkResetHeartbeat() { if(configured) {client.reset();publish();} }
+bool serverLinkReachable() { return initialized && client.reachable(millis()); }
 bool serverLinkPollHeartbeat(bool online) {
     OwnedControl event{};
     for(int i=0;i<16 && controls && xQueueReceive(controls,&event,0)==pdTRUE;++i)
-        client.receive({event.kind,event.flags,event.id,event.sequence,event.body,event.size},millis());
+        if(event.kind==Kind::Opus) client.observeMedia(event.id,event.sequence);
+        else client.receive({event.kind,event.flags,event.id,event.sequence,event.body,event.size},millis());
     client.poll(millis(),online && initialized);publish();
     return online && initialized && client.ready(millis());
 }
@@ -90,8 +95,8 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
     if(!decode(packet,size,view)) { ++invalidRx;return 0; }
     if(!snapshot(expected) || view.id.client!=expected.client) { ++staleRx;return 0; }
     if(view.kind==Kind::Opus) {
-        if(!expected.turn || !sameTurn(view.id,expected) || view.id.response!=expected.response || view.size>capacity) { ++staleRx;return 0; }
-        memcpy(data,view.body,view.size);return view.size;
+        if(view.flags || !expected.turn || !sameTurn(view.id,expected) || view.id.response!=expected.response || view.size>capacity) { ++staleRx;return 0; }
+        receivedMedia=view.id;memcpy(data,view.body,view.size);return view.size;
     }
     if(view.kind!=Kind::HelloAck && !sameSession(view.id,expected)) { ++staleRx;return 0; }
     if(view.size>64) return 0;
@@ -101,10 +106,21 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
     return 0;
 }
 
+void serverLinkObserveMedia() {
+    const uint32_t now=millis();
+    if(sameTurn(receivedMedia,lastMediaIdentity) && receivedMedia.response==lastMediaIdentity.response && uint32_t(now-lastMediaNotice)<1000) return;
+    OwnedControl marker{Kind::Opus,0,receivedMedia,now,0,{}};
+    // Media never competes indefinitely with reliable controls; retry on next frame.
+    if(controls && xQueueSend(controls,&marker,0)==pdTRUE) { lastMediaNotice=now;lastMediaIdentity=receivedMedia; }
+}
+
 // Controller calls periodically. Counters are cumulative across turns/reconnects.
 void serverLinkLogDiagnostics() {
 #if PIUU_DIAGNOSTICS
     const auto s=client.stats();
+    appLog().printf("[LINK_STATS t=%lu] reachable=%d admission=%d rx_age_ms=%lu pong_age_ms=%lu\n",
+        (unsigned long)millis(),serverLinkReachable(),client.ready(millis()),
+        (unsigned long)client.receiveAge(millis()),(unsigned long)client.pongAge(millis()));
     appLog().printf("[V3_STATS t=%lu] turn=%lu pcm_tx=%lu tx_fail=%lu nack=%lu retx=%lu cache_miss=%lu retry=%lu startup_drop=%lu bad_rx=%lu stale_rx=%lu ctrl_drop=%lu\n",
         (unsigned long)millis(),(unsigned long)client.identity().turn,(unsigned long)s.pcmSent,
         (unsigned long)s.txFailed,(unsigned long)s.nacks,(unsigned long)s.retransmits,

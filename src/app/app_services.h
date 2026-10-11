@@ -8,3 +8,4 @@ bool appServicesReady();
 
 bool appServicesWifiReady();
 bool appServicesServerReady();
+bool appServicesServerReachable();

@@ -57,3 +57,4 @@ void appServicesPoll() {
 
 bool appServicesWifiReady() { return wifiReady; }
 bool appServicesServerReady() { return serverReady; }
+bool appServicesServerReachable() { return wifiReady && started && serverLinkReachable(); }

@@ -14,6 +14,9 @@ g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/service
 g++ -std=c++11 -Wall -Wextra -I test/services/mocks -I src test/settings/test_settings.cpp src/config/settings.cpp src/storage/storage_prefs.cpp -o "$task_test_dir/settings"
 "$task_test_dir/settings"
 
+g++ -std=c++11 -Wall -Wextra -I src test/playback/test_completion.cpp -o "$task_test_dir/completion"
+"$task_test_dir/completion"
+
 g++ -std=c++11 -Wall -Wextra -I src test/silence/test_silence.cpp -o "$task_test_dir/silence"
 "$task_test_dir/silence"
 

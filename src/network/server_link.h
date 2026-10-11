@@ -5,6 +5,9 @@
 bool serverLinkInit();
 bool serverLinkSend(const uint8_t *data, size_t size);
 void serverLinkResetHeartbeat();
+bool serverLinkReachable();
+// RX-only: call after validating the inner Opus format; throttled owner notification.
+void serverLinkObserveMedia();
 bool serverLinkPollHeartbeat(bool online);
 int serverLinkParsePacket();
 int serverLinkRead(uint8_t *data, size_t capacity);

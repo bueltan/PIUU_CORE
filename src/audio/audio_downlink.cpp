@@ -6,6 +6,7 @@
  */
 
 #include "audio/audio_downlink.h"
+#include "audio/playback_completion.h"
 
 #include <Arduino.h>
 
@@ -85,6 +86,7 @@ static SemaphoreHandle_t jitterMutex = nullptr;
 static std::atomic<uint32_t> requestedEpoch{0};
 static std::atomic<uint32_t> processedEpoch{0};
 static std::atomic_bool expectResponse{false};
+static std::atomic<uint32_t> responseExpectedAt{0};
 static std::atomic<uint32_t> submittedMediaSamples{0};
 static uint32_t lastMediaWriteMs=0;
 bool audioDownlinkEpochReady() { return processedEpoch.load()==requestedEpoch.load(); }
@@ -101,7 +103,7 @@ void audioDownlinkBeginTurn(uint32_t epoch) {
     expectResponse.store(false);
     requestedEpoch.store(epoch);
 }
-void audioDownlinkExpectResponse() { expectResponse.store(true); }
+void audioDownlinkExpectResponse() { responseExpectedAt.store(millis());expectResponse.store(true); }
 
 
 // ============================================================
@@ -466,6 +468,8 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len, uint32_t packetE
     if (!expectResponse.load() || processedEpoch.load() != requestedEpoch.load()) return true;
     ServerProtocol::OpusPacket packet{};
     if (!ServerProtocol::decodeOpus(buf, len, packet)) return false;
+    // Valid transport traffic proves reachability even if jitter rejects its position.
+    serverLinkObserveMedia();
     if (packet.end) {
         markEndPacket(packet.sequence, packetEpoch);
         appLog().printf("[UDP] END packet seq=%lu\n", (unsigned long)packet.sequence);
@@ -568,21 +572,21 @@ static void playbackTask(void *parameter)
             continue;
         }
 
-        if (seenEnd && buffered == 0 && expSeq >= eSeq)
-        {
-            finished = true;
-            expectResponse.store(false);
-            continue;
+        const auto completion=playbackCompletion(seenEnd,expSeq,eSeq,buffered,
+            expectResponse.load(),nowMs,lastPktMs?lastPktMs:responseExpectedAt.load(),RESPONSE_STALL_TIMEOUT_MS,
+            (rebuf || !started) && !seenEnd && buffered<(started?REBUFFER_PACKETS:START_BUFFERED_PACKETS));
+        if(completion==PlaybackCompletion::Finished) {
+            finished=true;expectResponse.store(false);continue;
         }
-
-        if (!seenEnd && started && buffered == 0)
-        {
-            if ((nowMs - lastPktMs) > END_TIMEOUT_MS)
-            {
-                finished = true;
-                expectResponse.store(false);
-                continue;
+        if(completion==PlaybackCompletion::Stalled) {
+            // Retry the failure event if its bounded queue is full. Never emit PLAYED.
+            if(eventSink && eventSink({epoch,PlaybackEventKind::Failed})) {
+                appLog().printf("[PLAYBACK] stalled epoch=%lu seq=%lu end=%d idle_ms=%lu\n",
+                    (unsigned long)epoch,(unsigned long)expSeq,seenEnd,
+                    (unsigned long)(nowMs-(lastPktMs?lastPktMs:responseExpectedAt.load())));
+                finished=finishReported=true;expectResponse.store(false);
             }
+            continue;
         }
 
         if (rebuf || !started)

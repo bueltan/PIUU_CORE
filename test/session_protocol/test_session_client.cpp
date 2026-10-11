@@ -8,7 +8,7 @@ static std::vector<std::vector<uint8_t>> sent;
 static bool send(const uint8_t*p,size_t n) {sent.emplace_back(p,p+n);return true;}
 static Packet last() {Packet p{};assert(decode(sent.back().data(),sent.back().size(),p));return p;}
 static Packet find(Kind k) {for(auto i=sent.rbegin();i!=sent.rend();++i){Packet p{};decode(i->data(),i->size(),p);if(p.kind==k)return p;}assert(false);return {};}
-static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;c.receive(p,now);}
+static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;p.body=nullptr;p.size=0;c.receive(p,now);}
 static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=1;c.receive(p,now);assert(c.ready(now));}
 static uint32_t calls=0;
 static bool responseReady=false;
@@ -23,7 +23,7 @@ int main(){
  put32(body,99);c.receive(nack,154);assert(last().kind==Kind::Missing&&last().sequence==99);
  c.cancel(123);assert(c.identity().turn==0);assert(c.beginConversation());auto second=c.identity();assert(second.turn>first.turn);c.poll(155,true);assert(last().kind==Kind::Cancel&&last().id.turn==first.turn);ack(c,Kind::Cancel,Kind::CancelAck,156);c.poll(156,true);assert(last().kind==Kind::Start&&last().id.turn==second.turn);
  c.receive({Kind::Error,0,first,0,nullptr,0},157);assert(!c.takeFailure());ack(c,Kind::Start,Kind::StartAck,158);c.cancel(0);c.poll(159,true);ack(c,Kind::Cancel,Kind::CancelAck,160);assert(c.beginConversation());
- c.poll(6001,true);assert(c.takeFailure()&&!c.ready(6001));
+ c.poll(6201,true);assert(c.takeFailure()&&!c.ready(6201));
  SessionClient d;d.init(7,send);handshake(d,0);assert(d.beginConversation());for(int i=0;i<3;++i)pcm(d,i,1);
  assert(!d.sendBody(reinterpret_cast<const uint8_t*>("COMMIT"),6,1));
  d.poll(1,true);ack(d,Kind::Start,Kind::StartAck,2);d.poll(2,true);d.poll(3,true);
@@ -47,5 +47,29 @@ int main(){
  e.receive({Kind::Event,0,rid,1,responseEvent,5},6);assert(calls==1 && last().body[3]==123);
  uint8_t speechEvent[5]={1,0,0,0,2};e.receive({Kind::Event,0,rid,3,speechEvent,5},7);assert(calls==1);
  e.receive({Kind::Event,0,rid,2,speechEvent,5},8);assert(calls==2 && e.identity().response==0);
+ // A recent matching ACK keeps the link alive despite missing PONGs.
+ SessionClient live;live.init(100,send);handshake(live,0);assert(live.beginConversation());live.poll(1,true);
+ ack(live,Kind::Start,Kind::StartAck,5900);live.poll(6001,true);assert(!live.takeFailure()&&live.reachable(6001));
+ // Media liveness is scoped to the active response; old identities never refresh it.
+ live.setEventHandler(handleEvent);auto media=live.identity();media.response=9;
+ live.receive({Kind::Event,0,media,1,responseEvent,5},6002);
+ live.observeMedia(media,11000);live.poll(12001,true);assert(!live.takeFailure());
+ auto staleMedia=media;staleMedia.response=8;live.observeMedia(staleMedia,16000);
+ live.poll(17001,true);assert(live.takeFailure());
+ // Busy is reachable but cannot admit START. It is not a transport failure.
+ SessionClient busy;busy.init(101,send);handshake(busy,0);
+ auto busyId=busy.identity();busy.receive({Kind::Pong,0,{busyId.client,busyId.server,0,0},0,nullptr,0},100);
+ assert(busy.reachable(100)&&!busy.ready(100)&&!busy.beginConversation()&&!busy.takeFailure());
+ busy.receive({Kind::Pong,1,{busyId.client,busyId.server,0,0},0,nullptr,0},200);assert(busy.ready(200));
+ assert(busy.beginConversation());busy.poll(201,true);ack(busy,Kind::Start,Kind::StartAck,202);
+ busy.receive({Kind::Pong,0,{busyId.client,busyId.server,0,0},0,nullptr,0},300);
+ assert(!busy.takeFailure()&&busy.identity().turn&&busy.reachable(300));
+ // Unknown, malformed and foreign traffic cannot keep the link alive.
+ busy.receive({Kind::Pong,1,{busyId.client,busyId.server+1,0,0},0,nullptr,0},6000);
+ busy.receive({Kind::Pong,1,{busyId.client,busyId.server,0,0},0,responseEvent,5},6000);
+ busy.poll(6301,true);assert(busy.takeFailure());
+ // Unsigned receive ages survive millis rollover.
+ SessionClient wrap;wrap.init(102,send);handshake(wrap,UINT32_MAX-100);
+ assert(wrap.reachable(50)&&wrap.ready(50));
  puts("PASS: v3 ACK retry, continuous PCM, response events/duplicate ACK, playback ACK, NACK once/cache miss, cancellation IDs, normal reuse and timeouts");
 }

@@ -13,9 +13,13 @@ void SessionClient::reset() {
     // was lost. HELLO with the new incarnation makes the peer clear that state.
     if(++id.client==0) ++id.client;
     id.server=0;id.turn=id.response=0;count=0;established=available=started=helloSent=pingSent=false;
-    lastPong=0;awaitingResponseReset=false;for(auto &f:cache) f.valid=false;
+    lastPong=lastReceive=0;awaitingResponseReset=false;for(auto &f:cache) f.valid=false;
 }
-bool SessionClient::ready(uint32_t now) const { return established && available && uint32_t(now-lastPong)<6000; }
+bool SessionClient::reachable(uint32_t now) const { return established && uint32_t(now-lastReceive)<6000; }
+bool SessionClient::ready(uint32_t now) const { return reachable(now) && available; }
+void SessionClient::observeMedia(Identity identity,uint32_t now) {
+    if(id.turn && id.response && sameTurn(identity,id) && identity.response==id.response) lastReceive=now;
+}
 bool SessionClient::emit(Kind kind,Identity identity,uint32_t seq,const uint8_t *body,size_t size,uint16_t flags) {
     uint8_t packet[MAX_PACKET];
     const size_t bytes=encode(packet,sizeof(packet),{kind,flags,identity,seq,body,uint16_t(size)});
@@ -72,20 +76,18 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0) {
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~1u)) {
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
-        id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=now;
+        id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("HELLO_READY",available);
-        if(!available && id.turn) { report("XAI_UNAVAILABLE");reset();failed=true; }
         return;
     }
     if(!sameSession(packet.id,id)) return;
-    if(packet.kind==Kind::Pong) {
+    if(packet.kind==Kind::Pong && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~1u)) {
         const bool changed=available!=bool(packet.flags&1);
-        available=(packet.flags&1)!=0;lastPong=now;
+        available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("PONG_READY",available);
-        if(!available && id.turn) { report("XAI_UNAVAILABLE");reset();failed=true; }
         return;
     }
     if(packet.kind==Kind::Error) {
@@ -94,12 +96,14 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
     }
     if(packet.kind==Kind::Event && sameTurn(packet.id,id) && id.turn && packet.flags==0 && packet.size==5) {
         for(const auto &a:eventAcks) if(a.sequence==packet.sequence && sameTurn(a.id,packet.id) && a.id.response==packet.id.response) {
+            lastReceive=now;
             if(awaitingResponseReset && a.sequence==lastEvent) return;
             uint8_t body[4];put32(body,a.played);emit(Kind::EventAck,a.id,a.sequence,body,4);return;
         }
         if(packet.sequence!=lastEvent+1) { report("EVENT_OUT_OF_ORDER",packet.sequence,lastEvent);return; }
         const auto event=SessionProtocol::Event(packet.body[0]);
         if(packet.body[0]<1 || packet.body[0]>5 || (event==SessionProtocol::Event::ResponseStarted && !packet.id.response)) return;
+        lastReceive=now;
         const uint32_t played=eventHandler ? eventHandler(event,packet.id.response,read32(packet.body+1)) : 0;
         if(event==SessionProtocol::Event::ResponseStarted) id.response=packet.id.response;
         else if(event==SessionProtocol::Event::SpeechStarted) id.response=0;
@@ -109,7 +113,8 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
         report("SERVER_EVENT",packet.body[0],packet.id.response);return;
     }
     if(count && packet.kind==ack(commands[0].kind) && packet.sequence==commands[0].request &&
-       sameTurn(packet.id,commands[0].id) && packet.id.response==commands[0].id.response) {
+       sameTurn(packet.id,commands[0].id) && packet.id.response==commands[0].id.response && packet.size==0 && !(packet.flags&~1u)) {
+        lastReceive=now;
         const Kind kind=commands[0].kind;
         reportFor("CONTROL_ACK",packet.id,uint32_t(packet.kind),packet.sequence);
         if(!(packet.flags&1)) { reportFor("ACK_REJECTED",packet.id,uint32_t(packet.kind),packet.sequence);reset();failed=true;return; }
@@ -118,7 +123,8 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
         if(kind==Kind::Start && sameTurn(packet.id,id)) started=true;
         return;
     }
-    if(packet.kind!=Kind::Nack || !sameTurn(packet.id,id) || packet.size!=6 || !started) return;
+    if(packet.kind!=Kind::Nack || !sameTurn(packet.id,id) || packet.size!=6 || packet.flags || packet.id.response || !started) return;
+    lastReceive=now;
     ++counters.nacks;
     const uint32_t base=read32(packet.body);const uint16_t mask=uint16_t(packet.body[4])<<8|packet.body[5];
     for(uint32_t bit=0;bit<8;++bit) if(mask&(1u<<bit)) {
@@ -140,7 +146,7 @@ void SessionClient::poll(uint32_t now,bool online) {
         const auto &saved=eventAcks[lastEvent%16];uint8_t body[4];put32(body,saved.played);
         emit(Kind::EventAck,saved.id,saved.sequence,body,4);awaitingResponseReset=false;
     }
-    if(id.turn && uint32_t(now-lastPong)>=6000) { report("HEARTBEAT_TIMEOUT");reset();failed=true;return; }
+    if(id.turn && uint32_t(now-lastReceive)>=6000) { report("HEARTBEAT_TIMEOUT",uint32_t(now-lastReceive),uint32_t(now-lastPong));reset();failed=true;return; }
     if(!pingSent || uint32_t(now-lastPing)>=3000) {
         emit(Kind::Ping,{id.client,id.server,0,0},0,nullptr,0);lastPing=now;pingSent=true;
     }

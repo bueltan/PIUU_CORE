@@ -97,7 +97,11 @@ void conversationPoll() {
     const ConversationState beforePlayback=machine.state();
     PlaybackEvent event{};
     for (int i = 0; i < 8 && events && xQueueReceive(events, &event, 0) == pdTRUE; ++i)
-        { const auto before=machine.state();machine.playback(event);transition(before,"playback_event"); }
+        { const auto before=machine.state();
+          if(event.epoch==machine.epoch() && event.kind==PlaybackEventKind::Failed) {
+              appLog().println("[CONV] playback_stalled; cancel conversation");conversationAbort();
+          } else machine.playback(event);
+          transition(before,"playback_event"); }
     if (beforePlayback!=ConversationState::Listening && machine.state()==ConversationState::Listening) {
         if(transport.played) transport.played(transport.playedMs?transport.playedMs():0);
         silence.activity(millis());

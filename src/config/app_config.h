@@ -73,8 +73,10 @@ constexpr uint32_t HARD_REBUFFER_MISSES = 10;
 // Timing
 // ============================================================
 
-// Timeout used to consider the downlink stream finished if no more packets arrive.
-constexpr uint32_t END_TIMEOUT_MS = 1800;
+// A stalled response is aborted explicitly; only END means normal completion.
+#ifndef RESPONSE_STALL_TIMEOUT_MS
+#define RESPONSE_STALL_TIMEOUT_MS 10000u
+#endif
 
 // Playback task period in milliseconds.
 // 20 ms matches one Opus frame at 16 kHz / 320 samples.
@@ -85,8 +87,7 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 
 // Recommendation:
 // - PLAYBACK_PERIOD_MS should usually match the audio frame duration.
-// - END_TIMEOUT_MS should be long enough to tolerate short network pauses,
-//   but short enough to return the UI to READY state quickly after the stream ends.
+// - RESPONSE_STALL_TIMEOUT_MS bounds waiting for stalled audio or a lost END.
 // - STATS_PERIOD_MS can be lowered while debugging and raised in normal use
 //   to reduce Serial noise.
 #ifndef CONVERSATION_IDLE_TIMEOUT_MS

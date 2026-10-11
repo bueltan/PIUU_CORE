@@ -124,3 +124,16 @@ habilita log por frame a ningún nivel.
 
 No se agregaron aún inyectores de pérdida ni se cargó firmware. Logs correctos
 permiten observar los casos, pero no reemplazan la prueba con radio, DAC y xAI real.
+
+## Comprobación de heartbeat y reproducción (2026-10-11)
+
+- Cierre normal: silence_close o touch → CANCEL_ACK; si el backend anuncia busy,
+  mostrar Server busy y recuperar ready, sin reset de identidad por ese motivo.
+- PONG atrasado con ACK/eventos/audio válidos: LINK_STATS muestra pong_age_ms
+  creciente pero rx_age_ms reciente; no debe aparecer HEARTBEAT_TIMEOUT.
+- Pausa de audio sin END de unos 2 segundos: conservar respuesta y reanudar.
+  No debe aparecer PLAYED ni Listening por esa pausa.
+- Sin datos durante 10 segundos con búfer vacío: playback_stalled y CANCEL,
+  sin PLAYED. El plazo RESPONSE_STALL_TIMEOUT_MS es configurable.
+- Fin normal: END y búfer drenado → PLAYED_ACK → Listening.
+- Cortar energía al finalizar captura se analiza como interrupción externa.

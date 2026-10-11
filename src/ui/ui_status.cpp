@@ -39,9 +39,12 @@ void uiStatusRefreshStartScreen()
     } else if (!appServicesReady()) {
         setErrorLines("Audio offline", "Starting services...");
         state = UI_ERROR;
-    } else if (!appServicesServerReady()) {
+    } else if (!appServicesServerReachable()) {
         setErrorLines("No server", "Waiting backend...");
         state = UI_ERROR;
+    } else if (!appServicesServerReady() && conversationState()==ConversationState::Idle) {
+        setErrorLines("Server busy", "Finishing conversation...");
+        state=UI_ERROR;
     } else if (conversationState() == ConversationState::Listening) state = UI_LISTENING;
     else if (conversationState() == ConversationState::Connecting) state = UI_CONNECTING;
     else if (conversationState() == ConversationState::WaitingResponse) state = UI_THINKING;
@@ -61,7 +64,10 @@ void uiStatusHandleConversationToggle()
         case ConversationAction::InputUnavailable: uiStatusSetError("EARS unavailable", "Check UART link"); break;
         case ConversationAction::NoWifi: uiStatusSetError("No WiFi", "Open SETUP to connect"); break;
         case ConversationAction::ServicesUnavailable: uiStatusSetError("Audio offline", "Starting services..."); break;
-        case ConversationAction::NoServer: uiStatusSetError("No server", "Waiting backend..."); break;
+        case ConversationAction::NoServer:
+            if(appServicesServerReachable()) uiStatusSetError("Server busy", "Finishing conversation...");
+            else uiStatusSetError("No server", "Waiting backend...");
+            break;
         default: break;
     }
     uiStatusInvalidate();

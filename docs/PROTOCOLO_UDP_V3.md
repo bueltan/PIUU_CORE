@@ -90,6 +90,39 @@ PCM mantiene caché CORE de 12 frames, TTL 240 ms, un reintento y presupuesto 2
 frames por poll. Backend: orden 40 ms, recuperación 120 ms; después silencio
 20 ms/frame perdido, máximo 200 ms por hueco. Cola normal 16 frames.
 
+## Heartbeat, disponibilidad y fin de reproducción
+
+CORE distingue alcance UDP de admisión: recibir PONG/HELLO_ACK válido con
+ready=0 demuestra alcance, pero impide abrir otra conversación. La UI presenta
+`Server busy / Finishing conversation...`; `No server` queda reservado para
+falta de alcance. Durante una conversación, ready=0 por sí solo no cambia su
+identidad ni la aborta; ERROR y los controles siguen gestionando fallos explícitos.
+
+El plazo de alcance sigue siendo 6 segundos. Se renueva con HELLO_ACK/PONG,
+ACK de control esperado, eventos ordenados/duplicados reconocidos, NACK válido
+y audio Opus válido para la respuesta activa (aunque jitter descarte su posición). Identidades antiguas, formatos
+inválidos y tráfico ajeno no lo renuevan. El RX comunica actividad de audio al
+controlador como máximo una vez por segundo por respuesta, sin modificar el
+SessionClient desde la tarea de audio. PING/HELLO continúan durante el tráfico.
+`LINK_STATS` registra reachable, admission, rx_age_ms y pong_age_ms; el timeout
+incluye ambas edades como a/b en el log V3.
+
+Una pausa sin END mantiene el response_id y permite rebufferizar/reanudar; no
+produce PLAYED. Solo END, la secuencia final alcanzada y el búfer drenado
+permiten Finished normal. Si no llega audio inicial, se interrumpe el flujo o
+se pierde END, `RESPONSE_STALL_TIMEOUT_MS=10000` limita la espera sin datos con
+búfer vacío o insuficiente para salir de rebuffering. Su vencimiento emite Failed y cancela la conversación, nunca
+PLAYED. El plazo es configurable por build_flags. Logs: `[PLAYBACK] stalled` y
+`[CONV] playback_stalled`. El corte de energía no permite emitir CANCEL: el
+backend conserva su timeout de peer como respaldo.
+
+Validación offline: ACK reciente con PONG ausente; audio de respuesta actual
+frente a audio de identidad vieja; busy accesible sin admisión; recuperación de
+ready; falta total de tráfico y rollover; pausa de 2 segundos sin END; END normal;
+timeout explícito sin END y cancelación sin PLAYED. En placa, repetir con pausas
+de red y confirmar continuidad/ausencia de falso `No server` al cerrar. No se
+modifican aquí recuperación NACK, pacing Opus ni confirmaciones de recorte xAI.
+
 ## Cierre por silencio
 
 `CONVERSATION_IDLE_TIMEOUT_MS=30000` y `CONVERSATION_ACTIVITY_LEVEL=160` son
