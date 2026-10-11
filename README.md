@@ -57,3 +57,12 @@ Desde la carpeta Projects:
 bash PIUU_CORE/test/run_host_tests.sh
 pio run -d PIUU_CORE -e cyd -e cyd2usb
 ```
+
+### Medir recursos de CORE
+
+Las métricas de rendimiento están activas para las pruebas actuales. En
+`platformio.ini`, cambiar `-DPIUU_PERFORMANCE_DIAGNOSTICS=1` a
+`-DPIUU_PERFORMANCE_DIAGNOSTICS=0` y recompilar para retirar sus mediciones y logs,
+conservando los diagnósticos habituales de conexión y errores.
+Consultar [métricas de rendimiento](docs/DIAGNOSTICOS_TEST_INTEGRADO.md#rendimiento-de-core)
+para interpretar CPU, stack, tiempos de audio y buffers.

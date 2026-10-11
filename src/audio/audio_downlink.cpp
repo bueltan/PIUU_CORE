@@ -6,6 +6,8 @@
  */
 
 #include "audio/audio_downlink.h"
+#include "diagnostics/performance.h"
+#include "diagnostics/metrics.h"
 #include "audio/playback_completion.h"
 
 #include <Arduino.h>
@@ -40,6 +42,11 @@ struct PacketSlot
 };
 
 static PacketSlot jitter[JITTER_SLOTS];
+static uint32_t jitterBuffered=0;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+static uint32_t jitterPeak=0;
+static Diagnostics::Rebuffer pauses;
+#endif
 
 // ============================================================
 // Playback state
@@ -118,6 +125,10 @@ void audioDownlinkExpectResponse() { responseExpectedAt.store(millis());expectRe
  */
 static void clearJitterNoLock()
 {
+    jitterBuffered=0;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+    jitterPeak=0; pauses=Diagnostics::Rebuffer{};
+#endif
     for (int i = 0; i < JITTER_SLOTS; ++i)
     {
         jitter[i].used = false;
@@ -135,13 +146,7 @@ static void clearJitterNoLock()
  */
 static int countBufferedPacketsNoLock()
 {
-    int count = 0;
-    for (int i = 0; i < JITTER_SLOTS; ++i)
-    {
-        if (jitter[i].used)
-            count++;
-    }
-    return count;
+    return int(jitterBuffered);
 }
 
 /**
@@ -257,6 +262,7 @@ static bool popExpectedPacketLocked(PacketSlot &out)
         {
             out = jitter[idx];
             jitter[idx].used = false;
+            --jitterBuffered;
             ok = true;
         }
         xSemaphoreGive(jitterMutex);
@@ -337,6 +343,10 @@ static bool insertPacketLocked(uint32_t seq,
             }
 
             jitter[idx].used = true;
+            ++jitterBuffered;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+            if (jitterBuffered>jitterPeak) jitterPeak=jitterBuffered;
+#endif
             jitter[idx].seq = seq;
             jitter[idx].pts_samples = pts_samples;
             jitter[idx].frame_samples = frame_samples;
@@ -406,7 +416,11 @@ static bool opusInit()
  * @brief Writes one zero-filled frame to the DAC when usable audio cannot be recovered.
  */
 static void writeMedia(const int16_t *pcm,size_t samples) {
-    audioOutputWrite(pcm,samples);lastMediaWriteMs=millis();submittedMediaSamples.store(expectedSeq*320+uint32_t(samples));
+    {
+        Diagnostics::Measure measure(Diagnostics::Operation::OutputWrite);
+        audioOutputWrite(pcm,samples);
+    }
+    lastMediaWriteMs=millis();submittedMediaSamples.store(expectedSeq*320+uint32_t(samples));
 }
 static void writeSilenceFrame()
 {
@@ -417,13 +431,18 @@ static void writeSilenceFrame()
  * @brief Attempts FEC using the next packet, then Opus PLC, then silence. Does not advance
  * expectedSeq; successful decoding does not prove FEC data was present.
  */
+static int measuredDecode(OpusDecoder *decoder,const unsigned char *data,opus_int32 bytes,
+                          opus_int16 *pcm,int samples,int fec) {
+    Diagnostics::Measure measure(Diagnostics::Operation::Decode);
+    return opus_decode(decoder,data,bytes,pcm,samples,fec);
+}
 static void decodeAndWriteLossRecovery()
 {
     PacketSlot nextPkt;
 
     if (peekPacketBySeqLocked(expectedSeq + 1, nextPkt))
     {
-        int fecSamples = opus_decode(
+        int fecSamples = measuredDecode(
             opusDecoder,
             nextPkt.payload,
             nextPkt.payload_len,
@@ -439,7 +458,7 @@ static void decodeAndWriteLossRecovery()
         }
     }
 
-    int plcSamples = opus_decode(
+    int plcSamples = measuredDecode(
         opusDecoder,
         nullptr,
         0,
@@ -575,6 +594,12 @@ static void playbackTask(void *parameter)
         const auto completion=playbackCompletion(seenEnd,expSeq,eSeq,buffered,
             expectResponse.load(),nowMs,lastPktMs?lastPktMs:responseExpectedAt.load(),RESPONSE_STALL_TIMEOUT_MS,
             (rebuf || !started) && !seenEnd && buffered<(started?REBUFFER_PACKETS:START_BUFFERED_PACKETS));
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+        if (completion!=PlaybackCompletion::Pending && xSemaphoreTake(jitterMutex,portMAX_DELAY)==pdTRUE) {
+            pauses.end(nowMs);
+            xSemaphoreGive(jitterMutex);
+        }
+#endif
         if(completion==PlaybackCompletion::Finished) {
             finished=true;expectResponse.store(false);continue;
         }
@@ -606,6 +631,9 @@ static void playbackTask(void *parameter)
                     expectedSeq = minSeq;
                     playbackStarted = true;
                     rebuffering = false;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+                    pauses.end(nowMs);
+#endif
                     consecutiveMisses = 0;
                     bool shouldLog = resumeLogArmed;
                     resumeLogArmed = false;
@@ -640,6 +668,9 @@ static void playbackTask(void *parameter)
 
                 if (bufferIsActuallyLow || tooManyMissesWithLowBuffer || shouldHardRebuffer)
                 {
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+                    if (playbackStarted && !rebuffering) pauses.begin(nowMs);
+#endif
                     rebuffering = true;
                     resumeLogArmed = true;
                     if (shouldHardRebuffer)
@@ -669,7 +700,7 @@ static void playbackTask(void *parameter)
             xSemaphoreGive(jitterMutex);
         }
 
-        int decodedSamples = opus_decode(
+        int decodedSamples = measuredDecode(
             opusDecoder,
             playbackPkt.payload,
             playbackPkt.payload_len,
@@ -799,5 +830,15 @@ void audioDownlinkLogStacks() {
     for(const auto &task:downlinkTasks) if(task.handle)
         appLog().printf("[STACK t=%lu] task=%s hwm_bytes=%lu\n",(unsigned long)millis(),task.name,
             (unsigned long)uxTaskGetStackHighWaterMark(task.handle));
+#endif
+}
+
+bool audioDownlinkBufferStats(AudioBufferStats &stats) {
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+    if (!jitterMutex || xSemaphoreTake(jitterMutex,0)!=pdTRUE) return false;
+    stats={jitterBuffered,jitterPeak,pauses.count,pauses.totalMs,pauses.maxMs,pauses.activeMs(millis())};
+    xSemaphoreGive(jitterMutex);return true;
+#else
+    (void)stats;return false;
 #endif
 }

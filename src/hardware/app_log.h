@@ -1,8 +1,6 @@
 #pragma once
 // Event logs and 5-second snapshots; independent of USB/UART log routing.
-#ifndef PIUU_DIAGNOSTICS
-#define PIUU_DIAGNOSTICS 1
-#endif
+#include "diagnostics/config.h"
 // UART0 provides logs over USB. An optional UART1 adapter can override it.
 #ifdef PIUU_DEBUG_TX_PIN
 #include <Arduino.h>

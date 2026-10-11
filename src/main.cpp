@@ -1,4 +1,5 @@
 #include "hardware/app_log.h"
+#include "diagnostics/performance.h"
 #include <Arduino.h>
 #include "hardware/display_hal.h"
 #include "hardware/touch_hal.h"
@@ -65,7 +66,11 @@ void loop() {
         }
         case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
         case 2: audioDownlinkLogDiagnostics();break;
-        case 3: audioDownlinkLogStacks();break;
+        case 3:
+#if !PIUU_PERFORMANCE_DIAGNOSTICS
+            audioDownlinkLogStacks();
+#endif
+            break;
         case 4:
         appLog().printf("[RESOURCE t=%lu] heap=%lu min_heap=%lu max_block=%lu loop_hwm_bytes=%lu\n",
             (unsigned long)millis(),(unsigned long)ESP.getFreeHeap(),(unsigned long)ESP.getMinFreeHeap(),
@@ -75,6 +80,7 @@ void loop() {
         diagnosticsPhase=(diagnosticsPhase+1)%5;
     }
 #endif
+    Diagnostics::performancePoll();
     uiStatusRefreshStartScreen();
     delay(20);
 }

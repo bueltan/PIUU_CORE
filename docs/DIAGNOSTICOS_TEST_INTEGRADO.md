@@ -137,3 +137,49 @@ permiten observar los casos, pero no reemplazan la prueba con radio, DAC y xAI r
   sin PLAYED. El plazo RESPONSE_STALL_TIMEOUT_MS es configurable.
 - Fin normal: END y búfer drenado → PLAYED_ACK → Listening.
 - Cortar energía al finalizar captura se analiza como interrupción externa.
+
+## Rendimiento de CORE
+
+Activo con `PIUU_PERFORMANCE_DIAGNOSTICS=1` en `platformio.ini`. Cambiar a `0` y
+recompilar elimina los snapshots, temporizadores de Opus/I2S y contadores de picos
+nuevos. Los logs anteriores de conexión/errores se conservan. `PIUU_DIAGNOSTICS`
+controla los resúmenes anteriores; los eventos de error existentes no dependen todos
+de esa opción. No hace falta modificar EARS ni backend.
+
+El módulo `src/diagnostics/` toma una muestra cada cinco segundos desde `loop`,
+sin crear tareas ni reservar memoria dinámica. Usa arrays estáticos para hasta 48
+tareas y reparte las líneas posteriores (como máximo una cada 80 ms). Si la tabla
+no alcanza, informa que no pudo obtener el snapshot y reinicia la referencia de CPU.
+
+| Prefijo | Interpretación |
+| --- | --- |
+| `CPU` | Ocupación estimada por núcleo en la ventana anterior, calculada como 100% menos el tiempo de su tarea IDLE. El primer informe establece la referencia. `snapshot_us` mide la consulta a FreeRTOS. |
+| `TASK` | CPU de cada tarea como porcentaje de un núcleo, afinidad y mínimo histórico de stack libre en **bytes**. `valid=0` indica una tarea sin muestra previa; ese 0% todavía no es una medición. `affinity=-1` indica que no tiene un núcleo fijo. |
+| `PERF op=opus` | Cantidad, promedio y máximo en microsegundos de llamadas al decodificador, incluyendo FEC/PLC. `over20ms` cuenta llamadas que superaron el tiempo de un frame. |
+| `PERF op=i2s_wait_write` | Duración de escritura de PCM, **incluyendo espera** por espacio en DMA; no representa consumo de CPU. `n=0` es normal en reposo. |
+| `BUFFERS` | Ocupación actual/capacidad y picos de las colas PCM/eventos de EARS y del jitter buffer. `valid=0` significa que no se pudo leer el jitter sin esperar; sus ceros no deben interpretarse como mediciones. |
+| `BUFFERS rebuf_*` | Cantidad, duración acumulada y máximo de pausas terminadas para rellenar audio, y duración de la pausa activa. Excluye el llenado inicial. No es una medida acústica de cortes. |
+| `RESOURCE` | Heap libre, mínimo histórico y mayor bloque libre, como antes. |
+
+Los tiempos de `PERF` se reinician por ventana de cinco segundos. Los picos de
+EARS y los mínimos de stack corresponden a todo el arranque. El pico de jitter y
+las pausas se reinician con el estado de reproducción de cada respuesta/epoch;
+`total_ms`/`max_ms` incluyen pausas terminadas y `active_ms` muestra la aún abierta.
+Los valores de cola se leen mientras los workers continúan: son snapshots, no un
+registro completo de cada frame. Los contadores usan resta sin signo para tolerar
+el rollover del reloj; los tiempos de CPU son estimaciones del scheduler y no un
+perfil exacto de instrucciones/interrupciones. Las CPU de las tareas se expresan
+respecto de **un** núcleo; la suma en el equipo puede acercarse a 200%.
+
+Para comparar: guardar 20–30 s con conversación cerrada, abrir con wake/touch,
+hablar y dejar terminar una respuesta, y guardar otros 20–30 s en reposo. Correlacionar
+`CPU`, `PERF`, `BUFFERS` y `RESOURCE` con `CONV_STATS`/eventos de reproducción.
+Un `max_us` alto en Opus, poco margen de stack o repetidos `rebuf_n` ayudan a separar
+presión de procesamiento de irregularidad de llegada de paquetes. La instrumentación
+consume recursos propios; comparar también una compilación desactivada si afecta al audio.
+
+Validación local: suite host (incluida interoperabilidad CORE/backend), compilación
+`cyd` y `cyd2usb` activa, y compilación CYD con métricas desactivadas. El firmware
+sin métricas no contiene sus prefijos. En esta configuración, activarlas añade
+4216 bytes de RAM estática (122752 bytes totales frente a 118536 desactivadas).
+Los porcentajes reales de CPU y el efecto sobre el audio requieren el test en placa.

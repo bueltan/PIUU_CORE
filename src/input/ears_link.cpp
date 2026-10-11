@@ -1,4 +1,5 @@
 #include "input/ears_link.h"
+#include "diagnostics/config.h"
 #include "config/ears_config.h"
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
@@ -17,6 +18,14 @@ std::atomic<uint32_t> order{0},lastPacketMs{0},request{0};
 std::atomic_bool seenPeer{false},remoteStreaming{false};
 uint32_t localAckErrors=0; // worker-only
 std::atomic<uint32_t> audioReceived{0},audioDropped{0},eventDropped{0},parseRejected{0},commandsSent{0};
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+std::atomic<uint32_t> audioDepth{0},eventDepth{0},audioPeak{0},eventPeak{0};
+// All queue mutations are serialized by packetMutex, so peaks cannot race.
+void queued(std::atomic<uint32_t>& depth,std::atomic<uint32_t>& peak) {
+    const uint32_t value=++depth;
+    if (value>peak.load()) peak.store(value);
+}
+#endif
 static_assert(std::is_trivially_copyable<EarsMessage>::value,"UART queues must own their data");
 void receive(void*,const EarsProtocol::PacketView &packet) {
     if (packet.kind==EarsProtocol::Kind::Event && packet.code==uint8_t(EarsProtocol::Event::StreamState) &&
@@ -33,6 +42,9 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
         }
         ++audioReceived;
         if (xQueueSend(audioQueue,&frame,0)!=pdTRUE) ++audioDropped;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+        else queued(audioDepth,audioPeak);
+#endif
     } else {
         if (packet.code==uint8_t(EarsProtocol::Event::StreamState)) {
             remoteStreaming.store(packet.payload[0]!=0);
@@ -42,6 +54,9 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
         EarsEvent event{};event.order=serialOrder;event.code=packet.code;event.size=packet.size;
         if (packet.size) memcpy(event.payload,packet.payload,packet.size);
         if (xQueueSend(eventQueue,&event,0)!=pdTRUE) ++eventDropped;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+        else queued(eventDepth,eventPeak);
+#endif
     }
     xSemaphoreGive(packetMutex);
 }
@@ -118,15 +133,29 @@ bool earsLinkTake(EarsMessage &message) {
     if (haveEvent && (!haveAudio || int32_t(event.order-audio.order)<0)) {
         message.kind=EarsProtocol::Kind::Event;
         const bool ok=xQueueReceive(eventQueue,&message.event,0)==pdTRUE;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+        if (ok) --eventDepth;
+#endif
         xSemaphoreGive(packetMutex);return ok;
     }
     if (haveAudio) {
         message.kind=EarsProtocol::Kind::Pcm;
         const bool ok=xQueueReceive(audioQueue,&message.audio,0)==pdTRUE;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+        if (ok) --audioDepth;
+#endif
         xSemaphoreGive(packetMutex);return ok;
     }
     xSemaphoreGive(packetMutex);return false;
 }
 EarsLinkStats earsLinkStats() {
     return {audioReceived.load(),audioDropped.load(),eventDropped.load(),parseRejected.load(),commandsSent.load(),remoteStreaming.load()};
+}
+
+EarsQueueStats earsLinkQueueStats() {
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+    return {audioDepth.load(),audioPeak.load(),eventDepth.load(),eventPeak.load()};
+#else
+    return {0,0,0,0};
+#endif
 }

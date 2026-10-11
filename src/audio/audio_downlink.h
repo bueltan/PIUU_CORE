@@ -14,6 +14,8 @@ uint32_t audioDownlinkPlayedMs();
 
 void audioDownlinkLogDiagnostics();
 void audioDownlinkLogStacks();
+struct AudioBufferStats { uint32_t buffered, peak, rebufferCount, totalMs, maxMs, activeMs; };
+bool audioDownlinkBufferStats(AudioBufferStats &stats);
 
 // Reset has reached the playback worker; safe to acknowledge a new response.
 bool audioDownlinkEpochReady();

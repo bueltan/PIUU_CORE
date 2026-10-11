@@ -44,11 +44,14 @@ int main() {
     for(int i=0;i<8;++i) Serial2.inject(pcm(20+i));
     Serial2.inject(event(3));waitFor([]{return earsLinkStats().audioReceived==9 && earsLinkStats().audioDropped==2;});
     waitFor([]{return earsLinkReceivedOrder()>=13;});
+    assert(earsLinkQueueStats().audio==6 && earsLinkQueueStats().audioPeak==6);
     for(int i=0;i<6;++i) { waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==uint32_t(20+i)); }
     waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Event && m.event.code==3);
     for(int i=0;i<10;++i) Serial2.inject(event(42));
     waitFor([]{return earsLinkStats().eventDropped==2;});
     for(int i=0;i<8;++i) { waitFor([&]{return earsLinkTake(m);});assert(m.event.code==42); }
+    assert(earsLinkQueueStats().audio==0 && earsLinkQueueStats().events==0);
+    assert(earsLinkQueueStats().eventPeak==8);
     const auto sent=earsLinkStats().commandsSent;now+=500;
     waitFor([&]{return earsLinkStats().commandsSent>sent;}); // Reaffirm desired state, recover lost CMD/peer reboot.
     now+=2501;assert(!earsLinkPeerOnline());

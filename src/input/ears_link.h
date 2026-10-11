@@ -16,3 +16,5 @@ bool earsLinkTake(EarsMessage &message);
 uint32_t earsLinkReceivedOrder();
 bool earsLinkPeerOnline();
 EarsLinkStats earsLinkStats();
+struct EarsQueueStats { uint32_t audio, audioPeak, events, eventPeak; };
+EarsQueueStats earsLinkQueueStats();
