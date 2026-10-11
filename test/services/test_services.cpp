@@ -35,6 +35,7 @@ static std::vector<uint8_t> incoming;
 bool wifiServiceConnected() { return wifi; }
 bool wifiServiceBusy() { return false; }
 bool networkUdpInit(uint16_t) { ++binds; return bindOk; }
+void networkUdpLogDiagnostics() {}
 bool networkUdpSendRaw(const char *,uint16_t,const uint8_t *p,size_t n) { sent.emplace_back(p,p+n); return true; }
 int networkUdpParsePacket() { return incoming.size(); }
 int networkUdpRead(uint8_t *p,size_t n) {

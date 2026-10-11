@@ -8,6 +8,7 @@
 #include "audio/audio_downlink.h"
 #include "diagnostics/performance.h"
 #include "diagnostics/metrics.h"
+#include "diagnostics/downlink_trace.h"
 #include "audio/playback_completion.h"
 
 #include <Arduino.h>
@@ -45,7 +46,12 @@ static PacketSlot jitter[JITTER_SLOTS];
 static uint32_t jitterBuffered=0;
 #if PIUU_PERFORMANCE_DIAGNOSTICS
 static uint32_t jitterPeak=0;
+#endif
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_NETWORK_DIAGNOSTICS
 static Diagnostics::Rebuffer pauses;
+#endif
+#if PIUU_NETWORK_DIAGNOSTICS
+static Diagnostics::DownlinkTrace downlinkTrace;
 #endif
 
 // ============================================================
@@ -127,7 +133,13 @@ static void clearJitterNoLock()
 {
     jitterBuffered=0;
 #if PIUU_PERFORMANCE_DIAGNOSTICS
-    jitterPeak=0; pauses=Diagnostics::Rebuffer{};
+    jitterPeak=0;
+#endif
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_NETWORK_DIAGNOSTICS
+    pauses=Diagnostics::Rebuffer{};
+#endif
+#if PIUU_NETWORK_DIAGNOSTICS
+    downlinkTrace=Diagnostics::DownlinkTrace{};
 #endif
     for (int i = 0; i < JITTER_SLOTS; ++i)
     {
@@ -319,6 +331,9 @@ static bool insertPacketLocked(uint32_t seq,
             xSemaphoreGive(jitterMutex);
             return false;
         }
+#if PIUU_NETWORK_DIAGNOSTICS
+        downlinkTrace.arrival(seq,millis());
+#endif
         if (findSlotBySeqNoLock(seq) >= 0)
         {
             duplicatePackets++;
@@ -628,10 +643,13 @@ static void playbackTask(void *parameter)
             {
                 if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
                 {
+#if PIUU_NETWORK_DIAGNOSTICS
+                    downlinkTrace.resume(expectedSeq,minSeq,nowMs,!playbackStarted);
+#endif
                     expectedSeq = minSeq;
                     playbackStarted = true;
                     rebuffering = false;
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_NETWORK_DIAGNOSTICS
                     pauses.end(nowMs);
 #endif
                     consecutiveMisses = 0;
@@ -668,7 +686,7 @@ static void playbackTask(void *parameter)
 
                 if (bufferIsActuallyLow || tooManyMissesWithLowBuffer || shouldHardRebuffer)
                 {
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_NETWORK_DIAGNOSTICS
                     if (playbackStarted && !rebuffering) pauses.begin(nowMs);
 #endif
                     rebuffering = true;
@@ -732,6 +750,49 @@ static void playbackTask(void *parameter)
  * diagnostics.
  * @param parameter Unused FreeRTOS task argument.
  */
+
+void audioDownlinkPollDiagnostics() {
+#if PIUU_NETWORK_DIAGNOSTICS
+    static uint32_t lastReport=0,lastLine=0;
+    static unsigned remaining=0;
+    const uint32_t now=millis();
+    if(uint32_t(now-lastReport)>=5000) {
+        if(!jitterMutex || xSemaphoreTake(jitterMutex,0)!=pdTRUE)return;
+        const uint32_t epoch=processedEpoch.load();
+        const uint32_t arrivals=downlinkTrace.arrivals,next=downlinkTrace.nextSequence;
+        const uint32_t gaps=downlinkTrace.forwardEvents,forward=downlinkTrace.forwardFrames;
+        const uint32_t reordered=downlinkTrace.reordered,maxGap=downlinkTrace.maxInterval;
+        const uint32_t longGaps=downlinkTrace.longIntervals,skipped=downlinkTrace.skipped;
+        const uint32_t omitted=downlinkTrace.sampleDropped;
+        // Read time after locking: RX may have advanced lastTime since poll began.
+        const uint32_t capturedAt=millis();
+        const uint32_t age=downlinkTrace.seen?uint32_t(capturedAt-downlinkTrace.lastTime):0;
+        const auto pause=pauses;
+        xSemaphoreGive(jitterMutex);
+        lastReport=lastLine=now;remaining=8;
+        appLog().printf("[OPUS_RX t=%lu] epoch=%lu arrivals=%lu next=%lu gap_events=%lu forward_frames=%lu reorder_or_dup=%lu max_interval_ms=%lu intervals_ge100ms=%lu rx_age_ms=%lu skipped_frames=%lu sample_drop=%lu rebuf_n=%lu rebuf_total_ms=%lu rebuf_max_ms=%lu rebuf_active_ms=%lu\n",
+            (unsigned long)now,(unsigned long)epoch,(unsigned long)arrivals,(unsigned long)next,
+            (unsigned long)gaps,(unsigned long)forward,(unsigned long)reordered,(unsigned long)maxGap,
+            (unsigned long)longGaps,(unsigned long)age,(unsigned long)skipped,(unsigned long)omitted,
+            (unsigned long)pause.count,(unsigned long)pause.totalMs,(unsigned long)pause.maxMs,
+            (unsigned long)pause.activeMs(capturedAt));
+        return;
+    }
+    if(!remaining || uint32_t(now-lastLine)<80)return;
+    if(!jitterMutex || xSemaphoreTake(jitterMutex,0)!=pdTRUE)return;
+    Diagnostics::DownlinkSample sample;
+    const bool found=downlinkTrace.take(sample);
+    const uint32_t epoch=processedEpoch.load();
+    xSemaphoreGive(jitterMutex);
+    if(!found) { remaining=0;return; }
+    --remaining;lastLine=now;
+    appLog().printf("[OPUS_GAP t=%lu] epoch=%lu stage=%s expected=%lu received=%lu interval_ms=%lu skipped_frames=%lu\n",
+        (unsigned long)sample.time,(unsigned long)epoch,
+        sample.resume?(sample.initial?"initial":"resume"):"arrival",
+        (unsigned long)sample.expected,(unsigned long)sample.received,
+        (unsigned long)sample.interval,(unsigned long)sample.skipped);
+#endif
+}
 
 // Called by loop every five seconds; never print while holding the jitter lock.
 void audioDownlinkLogDiagnostics() {

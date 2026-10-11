@@ -7,6 +7,11 @@ trap 'rm -rf "$task_test_dir"' EXIT
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_metrics.cpp -o "$task_test_dir/metrics"
 "$task_test_dir/metrics"
 
+for network_diagnostics in 1 0; do
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_NETWORK_DIAGNOSTICS="$network_diagnostics" -I test/network_udp/mocks -I test/services/mocks -I src test/network_udp/test_network_udp.cpp src/network/network_udp.cpp -o "$task_test_dir/network_udp"
+    "$task_test_dir/network_udp"
+done
+
 g++ -std=c++11 -Wall -Wextra -I src src/protocol/server_protocol.cpp test/protocol/test_protocol.cpp -o "$task_test_dir/protocol"
 "$task_test_dir/protocol" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin"
 g++ -std=c++11 -I test/uplink -I src src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp test/uplink/test_uplink.cpp -o "$task_test_dir/uplink"

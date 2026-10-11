@@ -26,8 +26,10 @@
 void setup() {
     appLogBegin();
     delay(800);
-    appLog().printf("[BOOT] udp=v3 ears_rx=%d ears_tx=%d baud=%lu diag=%d\n",
-        EarsConfig::RX_PIN,EarsConfig::TX_PIN,(unsigned long)EarsConfig::BAUD,PIUU_DIAGNOSTICS);
+    appLog().printf("[BOOT] udp=v3 ears_rx=%d ears_tx=%d baud=%lu diag=%d perf_diag=%d uart_diag=%d net_diag=%d fifo_threshold=%u\n",
+        EarsConfig::RX_PIN,EarsConfig::TX_PIN,(unsigned long)EarsConfig::BAUD,PIUU_DIAGNOSTICS,
+        PIUU_PERFORMANCE_DIAGNOSTICS,PIUU_UART_DIAGNOSTICS,PIUU_NETWORK_DIAGNOSTICS,
+        unsigned(EarsConfig::RX_FIFO_FULL_THRESHOLD));
     initDisplayHardware();
     initTouchHardware();
     if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
@@ -68,14 +70,16 @@ void loop() {
         case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
         case 2: audioDownlinkLogDiagnostics();break;
         case 3:
-#if !PIUU_PERFORMANCE_DIAGNOSTICS
-            audioDownlinkLogStacks();
-#endif
             break;
         case 4:
         appLog().printf("[RESOURCE t=%lu] heap=%lu min_heap=%lu max_block=%lu loop_hwm_bytes=%lu\n",
             (unsigned long)millis(),(unsigned long)ESP.getFreeHeap(),(unsigned long)ESP.getMinFreeHeap(),
-            (unsigned long)ESP.getMaxAllocHeap(),(unsigned long)uxTaskGetStackHighWaterMark(nullptr));
+            (unsigned long)ESP.getMaxAllocHeap(),
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+            (unsigned long)uxTaskGetStackHighWaterMark(nullptr));
+#else
+            0UL); // Stack scans are disabled with performance diagnostics.
+#endif
         break;
         }
         diagnosticsPhase=(diagnosticsPhase+1)%5;
@@ -83,6 +87,7 @@ void loop() {
 #endif
     Diagnostics::performancePoll();
     Diagnostics::uartPoll();
+    audioDownlinkPollDiagnostics();
     uiStatusRefreshStartScreen();
     delay(20);
 }

@@ -192,7 +192,13 @@ permiten observar los casos, pero no reemplazan la prueba con radio, DAC y xAI r
 
 ## Rendimiento de CORE
 
-Activo con `PIUU_PERFORMANCE_DIAGNOSTICS=1` en `platformio.ini`. Cambiar a `0` y
+Actualmente desactivado (`PIUU_PERFORMANCE_DIAGNOSTICS=0`) para aislar pérdidas
+UART. Los nuevos logs `OPUS_RX`, `OPUS_GAP`, `UDP_IO` y conexión se controlan con
+`PIUU_NETWORK_DIAGNOSTICS=1`; ver [README](../README.md#optional-udp-and-connection-diagnostics).
+No se realizan lecturas periódicas de stack con rendimiento apagado;
+`RESOURCE loop_hwm_bytes=0` significa medición desactivada.
+
+Se habilita con `PIUU_PERFORMANCE_DIAGNOSTICS=1` en `platformio.ini`. Cambiar a `0` y
 recompilar elimina los snapshots, temporizadores de Opus/I2S y contadores de picos
 nuevos. Los logs anteriores de conexión/errores se conservan. `PIUU_DIAGNOSTICS`
 controla los resúmenes anteriores; los eventos de error existentes no dependen todos

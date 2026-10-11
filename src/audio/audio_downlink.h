@@ -13,6 +13,8 @@ void audioDownlinkExpectResponse();
 uint32_t audioDownlinkPlayedMs();
 
 void audioDownlinkLogDiagnostics();
+// Controller-only bounded sample drain; independent of performance diagnostics.
+void audioDownlinkPollDiagnostics();
 void audioDownlinkLogStacks();
 struct AudioBufferStats { uint32_t buffered, peak, rebufferCount, totalMs, maxMs, activeMs; };
 bool audioDownlinkBufferStats(AudioBufferStats &stats);

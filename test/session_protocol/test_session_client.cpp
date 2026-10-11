@@ -6,6 +6,14 @@
 using namespace SessionProtocol;
 static std::vector<std::vector<uint8_t>> sent;
 static bool send(const uint8_t*p,size_t n) {sent.emplace_back(p,p+n);return true;}
+static bool startupSendOk=false;
+static bool startupSend(const uint8_t *p,size_t n) { send(p,n);return startupSendOk; }
+static unsigned helloLogs=0,connectedLogs=0;
+static uint32_t helloLocalOk=0,helloElapsed=0,helloAttempts=0;
+static void startupTrace(const char *event,Identity,uint32_t a,uint32_t b) {
+ if(!strcmp(event,"HELLO_SEND")) { ++helloLogs;helloLocalOk=b; }
+ if(!strcmp(event,"HELLO_CONNECTED")) { ++connectedLogs;helloElapsed=a;helloAttempts=b; }
+}
 static Packet last() {Packet p{};assert(decode(sent.back().data(),sent.back().size(),p));return p;}
 static Packet find(Kind k) {for(auto i=sent.rbegin();i!=sent.rend();++i){Packet p{};decode(i->data(),i->size(),p);if(p.kind==k)return p;}assert(false);return {};}
 static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;p.body=nullptr;p.size=0;c.receive(p,now);}
@@ -71,5 +79,13 @@ int main(){
  // Unsigned receive ages survive millis rollover.
  SessionClient wrap;wrap.init(102,send);handshake(wrap,UINT32_MAX-100);
  assert(wrap.reachable(50)&&wrap.ready(50));
- puts("PASS: v3 ACK retry, continuous PCM, response events/duplicate ACK, playback ACK, NACK once/cache miss, cancellation IDs, normal reuse and timeouts");
+ SessionClient startup;startup.init(105,startupSend);startup.setObserver(startupTrace);
+ startup.poll(100,false);assert(helloLogs==0);
+ startup.poll(100,true);assert(helloLogs==1 && helloLocalOk==0);
+ startupSendOk=true;startup.poll(600,true);assert(helloLogs==2 && helloLocalOk==1);
+ auto reply=find(Kind::Hello);reply.kind=Kind::HelloAck;reply.id.server=2;reply.flags=1;
+ startup.receive(reply,650);assert(connectedLogs==1 && helloElapsed==550 && helloAttempts==2);
+ startup.poll(3600,true);assert(helloLogs==2); // Healthy HELLO keepalives are silent.
+ startup.receive(find(Kind::Hello),3601);assert(connectedLogs==1);
+ puts("PASS: v3 ACK retry, continuous PCM, response events/duplicate ACK, playback ACK, NACK once/cache miss, cancellation IDs, normal reuse, timeouts and HELLO diagnostics");
 }

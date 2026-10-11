@@ -14,6 +14,7 @@ void SessionClient::reset() {
     if(++id.client==0) ++id.client;
     id.server=0;id.turn=id.response=0;count=0;established=available=started=helloSent=pingSent=false;
     lastPong=lastReceive=0;awaitingResponseReset=false;for(auto &f:cache) f.valid=false;
+    helloAttempts=0;
 }
 bool SessionClient::reachable(uint32_t now) const { return established && uint32_t(now-lastReceive)<6000; }
 bool SessionClient::ready(uint32_t now) const { return reachable(now) && available; }
@@ -79,6 +80,7 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~1u)) {
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
+        if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
         id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("HELLO_READY",available);
         return;
@@ -139,7 +141,13 @@ void SessionClient::poll(uint32_t now,bool online) {
     if(!helloSent || uint32_t(now-lastHello)>=(established?3000u:500u)) {
         if(++nextRequest==0) ++nextRequest;
         helloRequest=nextRequest;
-        emit(Kind::Hello,{id.client,0,0,0},helloRequest,nullptr,0);lastHello=now;helloSent=true;
+        const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,nullptr,0);
+        if(!established) {
+            if(!helloAttempts) helloStarted=now;
+            ++helloAttempts;
+            report("HELLO_SEND",helloRequest,ok);
+        }
+        lastHello=now;helloSent=true;
     }
     if(!established) return;
     if(awaitingResponseReset && eventReady && eventReady()) {

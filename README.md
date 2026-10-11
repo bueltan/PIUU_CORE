@@ -76,10 +76,11 @@ pio run -d PIUU_CORE -e cyd -e cyd2usb
 
 ### Medir recursos de CORE
 
-Las métricas de rendimiento están activas para las pruebas actuales. En
-`platformio.ini`, cambiar `-DPIUU_PERFORMANCE_DIAGNOSTICS=1` a
-`-DPIUU_PERFORMANCE_DIAGNOSTICS=0` y recompilar para retirar sus mediciones y logs,
-conservando los diagnósticos habituales de conexión y errores.
+Las métricas de rendimiento están **desactivadas** para aislar las pérdidas UART:
+`PIUU_PERFORMANCE_DIAGNOSTICS=0`. Esto retira las capturas de tareas/CPU, tiempos
+de Opus/I2S y lecturas periódicas de stack. `loop_hwm_bytes=0` indica que esa
+medición está desactivada. Se conservan los diagnósticos de conexión, heap y UART.
+Para volver a medir recursos, cambiar el flag a `1` y recompilar.
 Consultar [métricas de rendimiento](docs/DIAGNOSTICOS_TEST_INTEGRADO.md#rendimiento-de-core)
 para interpretar CPU, stack, tiempos de audio y buffers.
 
@@ -96,8 +97,9 @@ El umbral de interrupción RX se configura en `EarsConfig::RX_FIFO_FULL_THRESHOL
 a **64 bytes**. En la FIFO de 128 bytes deja unos 694 us de margen a 921600
 baudios, frente a los 87 us del valor predeterminado de 120. Esto aumenta la
 frecuencia de interrupciones; la próxima captura debe verificar `fifo_threshold=64`
-en `UART_RX`, los incrementos de `UART_ERR fifo`/`rx_missing` durante el envío y
-el consumo de CPU. El margen no garantiza ausencia de desbordamientos.
+en `BOOT` y los incrementos de `UART_ERR fifo`/`rx_missing` durante el envío.
+`UART_RX` y CPU se pueden comparar al volver a habilitar rendimiento.
+El margen no garantiza ausencia de desbordamientos.
 
 Si persisten, comparar una segunda prueba con `PIUU_PERFORMANCE_DIAGNOSTICS=0`
 y `PIUU_UART_DIAGNOSTICS=1` para aislar el efecto de las mediciones de rendimiento.
@@ -132,3 +134,38 @@ not byte-integrity guarantees: PCM! still has no checksum.
 For correlated tests upload CORE and EARS with their diagnostics enabled. Keep
 KEYWORD firmware and the same test audio: existing KEYWORD discontinuity/queue
 logs plus EARS's `wake_*` timings cover that branch without changing its model.
+
+## Optional UDP and connection diagnostics
+
+`PIUU_NETWORK_DIAGNOSTICS=1` enables lightweight counters and bounded samples,
+independently of performance measurements. Set it to `0` and rebuild to remove
+the new UDP/downlink probes and connection log formatting. General periodic
+`UDP_IO` output also requires `PIUU_DIAGNOSTICS=1`.
+
+- `WIFI_CONNECT`: start/end of each connection attempt, status and elapsed time;
+  no SSID or password is logged. `HELLO_SEND` reports request ID and `local_ok`;
+  `HELLO_CONNECTED` reports elapsed time and attempts until a valid HELLO_ACK.
+  HELLO sends are logged only while establishing the link, not healthy keepalives.
+- `UDP_IO`: cumulative local send successes and failures (socket uninitialized,
+  mutex busy, beginPacket failure, short write, endPacket failure), RX lock misses,
+  empty reads and datagrams/bytes read. These counters do not prove network delivery
+  or expose Wi-Fi/lwIP losses before the socket. Failed beginPacket and short writes
+  are now reported as send failures instead of relying only on endPacket.
+- `OPUS_RX`: per-epoch validated audio arrivals before jitter admission,
+  forward sequence gaps, reorder/duplicate observations, largest arrival interval,
+  intervals >=100 ms, arrival age, skipped frames and rebuffer durations.
+- `OPUS_GAP`: timestamped `arrival`, `initial` and `resume` samples with expected/
+  received sequence. `arrival` gaps can subsequently be filled by reordered packets;
+  `forward_frames` is an observation count, not a final loss total. `skipped_frames`
+  counts sequence positions omitted when playback starts/resumes and is separate
+  from `AUDIO miss` recovery attempts. Do not add these overlapping counters.
+
+An eight-entry fixed ring bounds samples; `sample_drop` reports omitted detail.
+Summaries repeat every five seconds; at most eight detail samples drain per period,
+spaced at least 80 ms apart. RX/playback workers update counters under the existing
+jitter mutex; only loop() formats downlink logs, outside that mutex. Epoch changes
+reset the observations and samples. Arrival intervals include transport/socket
+and RX scheduling effects; they do not identify a network fault by themselves.
+
+For the next comparison upload only CORE, keep EARS/KEYWORD/audio unchanged and
+confirm BOOT reports `perf_diag=0 uart_diag=1 net_diag=1 fifo_threshold=64`.

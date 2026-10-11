@@ -53,6 +53,7 @@ private:
     Command commands[4]{};size_t count=0;
     Frame cache[CACHE_FRAMES]{};size_t cursor=0;
     uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,lastReceive=0,helloRequest=0;
+    uint32_t helloStarted=0,helloAttempts=0;
     bool helloSent=false,pingSent=false,established=false,available=false,started=false,failed=false;
     bool emit(SessionProtocol::Kind,SessionProtocol::Identity,uint32_t,const uint8_t*,size_t,uint16_t=0);
     bool queue(SessionProtocol::Kind,const uint8_t*,size_t);

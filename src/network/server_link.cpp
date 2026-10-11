@@ -17,6 +17,15 @@ uint32_t handleEvent(SessionProtocol::Event event,uint32_t response,uint32_t utt
     return conversationServerEvent(ConversationEvent(uint8_t(event)),response,utterance);
 }
 void trace(const char *event,Identity id,uint32_t a,uint32_t b) {
+    if(!strcmp(event,"HELLO_SEND") || !strcmp(event,"HELLO_CONNECTED")) {
+#if PIUU_NETWORK_DIAGNOSTICS
+        appLog().printf("[CONNECT t=%lu] %s c=%08lx%08lx %s=%lu %s=%lu\n",
+            (unsigned long)millis(),event,(unsigned long)(id.client>>32),(unsigned long)id.client,
+            !strcmp(event,"HELLO_SEND")?"request":"elapsed_ms",(unsigned long)a,
+            !strcmp(event,"HELLO_SEND")?"local_ok":"attempts",(unsigned long)b);
+#endif
+        return;
+    }
 #if PIUU_DIAGNOSTICS
     const char *kinds[]={"NONE","HELLO","HELLO_ACK","START","START_ACK","COMMIT","COMMIT_ACK","CANCEL","CANCEL_ACK","PCM","OPUS","NACK","MISSING","ERROR","PING","PONG","EVENT","EVENT_ACK","INTERRUPT","INTERRUPT_ACK","PLAYED","PLAYED_ACK"};
     if(!strncmp(event,"CONTROL",7) || !strncmp(event,"ACK",3)) {
@@ -116,6 +125,7 @@ void serverLinkObserveMedia() {
 
 // Controller calls periodically. Counters are cumulative across turns/reconnects.
 void serverLinkLogDiagnostics() {
+    networkUdpLogDiagnostics();
 #if PIUU_DIAGNOSTICS
     const auto s=client.stats();
     appLog().printf("[LINK_STATS t=%lu] reachable=%d admission=%d rx_age_ms=%lu pong_age_ms=%lu\n",

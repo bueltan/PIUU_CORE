@@ -27,3 +27,5 @@ int networkUdpParsePacket();
  * @brief Reads up to bufferSize bytes unchanged; returns zero for no data or a locking failure.
  */
 int networkUdpRead(uint8_t *buffer, size_t bufferSize);
+// Controller only; cumulative local I/O counters, no worker printing.
+void networkUdpLogDiagnostics();

@@ -5,6 +5,7 @@
 #include <freertos/task.h>
 #include <cstring>
 #include <type_traits>
+#include "hardware/app_log.h"
 
 namespace {
 struct WifiRequest { WifiOperation operation; char ssid[33]; char password[65]; };
@@ -16,6 +17,10 @@ bool busy = false; // Only controller reads/writes this; worker communicates via
 
 bool connect(const char *ssid, const char *password) {
     if (!ssid[0]) return false;
+#if PIUU_NETWORK_DIAGNOSTICS
+    const uint32_t connectStarted=millis();
+    appLog().printf("[WIFI_CONNECT t=%lu] phase=begin\n",(unsigned long)connectStarted);
+#endif
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(false, false);
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -23,6 +28,11 @@ bool connect(const char *ssid, const char *password) {
     const uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && uint32_t(millis() - start) < 15000)
         vTaskDelay(pdMS_TO_TICKS(50));
+#if PIUU_NETWORK_DIAGNOSTICS
+    appLog().printf("[WIFI_CONNECT t=%lu] phase=end connected=%d status=%d elapsed_ms=%lu\n",
+        (unsigned long)millis(),WiFi.status()==WL_CONNECTED,int(WiFi.status()),
+        (unsigned long)uint32_t(millis()-connectStarted));
+#endif
     if (WiFi.status() != WL_CONNECTED) return false;
     WiFi.setSleep(false);
     return true;
