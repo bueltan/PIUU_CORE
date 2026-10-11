@@ -17,9 +17,11 @@ public:
     std::atomic<size_t> byteReads{0},blockReads{0},bytesRead{0},maxRequested{0};
     std::atomic<size_t> readLimit{256}; // Exercise short reads from the driver.
     uint32_t baud=0;int rxPin=-1,txPin=-1;size_t rxBuffer=0,txBuffer=0;
+    uint8_t fifoThreshold=120;
     size_t setRxBufferSize(size_t n) { rxBuffer=n;return n; }
     size_t setTxBufferSize(size_t n) { txBuffer=n;return n; }
-    void begin(uint32_t b,int,int r,int t) { baud=b;rxPin=r;txPin=t;started=true; }
+    void begin(uint32_t b,int,int r,int t) { baud=b;rxPin=r;txPin=t;fifoThreshold=120;started=true; }
+    bool setRxFIFOFull(uint8_t threshold) { if(!started)return false;fifoThreshold=threshold;return true; }
     void end() { started=false; }
     explicit operator bool() const { return started; }
     int availableForWrite() { return 128; }

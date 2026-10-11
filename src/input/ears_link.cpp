@@ -164,7 +164,10 @@ bool earsLinkBegin() {
     serial.onReceiveError(uartError);
 #endif
     serial.begin(EarsConfig::BAUD,SERIAL_8N1,EarsConfig::RX_PIN,EarsConfig::TX_PIN);
-    if (!serial || xTaskCreatePinnedToCore(run,"earsUart",EarsConfig::WORKER_STACK_BYTES,nullptr,2,&worker,0)!=pdPASS) {
+    // Apply after begin(): Arduino's baud-dependent setup can overwrite the
+    // threshold passed to begin(). Do not start reception with an unverified setting.
+    if (!serial || !serial.setRxFIFOFull(EarsConfig::RX_FIFO_FULL_THRESHOLD) ||
+        xTaskCreatePinnedToCore(run,"earsUart",EarsConfig::WORKER_STACK_BYTES,nullptr,2,&worker,0)!=pdPASS) {
         serial.end();vQueueDelete(audioQueue);vQueueDelete(eventQueue);
         audioQueue=eventQueue=nullptr;worker=nullptr;vSemaphoreDelete(packetMutex);packetMutex=nullptr;return false;
     }

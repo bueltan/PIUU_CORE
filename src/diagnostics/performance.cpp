@@ -123,10 +123,11 @@ void performancePoll() {
     if (pendingNext==3) {
         ++pendingNext;
         const auto rx=earsLinkRxStats();
-        appLog().printf("[UART_RX t=%lu] bytes=%lu blocks=%lu avg_block=%lu max_block=%lu chunk=%u budget=%u\n",
+        appLog().printf("[UART_RX t=%lu] bytes=%lu blocks=%lu avg_block=%lu max_block=%lu chunk=%u budget=%u fifo_threshold=%u\n",
             (unsigned long)now,(unsigned long)rx.bytes,(unsigned long)rx.blocks,
             (unsigned long)(rx.blocks?rx.bytes/rx.blocks:0),(unsigned long)rx.maxBlock,
-            unsigned(EarsConfig::RX_READ_CHUNK_BYTES),unsigned(EarsConfig::RX_WORK_BUDGET_BYTES));
+            unsigned(EarsConfig::RX_READ_CHUNK_BYTES),unsigned(EarsConfig::RX_WORK_BUDGET_BYTES),
+            unsigned(EarsConfig::RX_FIFO_FULL_THRESHOLD));
         return;
     }
 #if configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS

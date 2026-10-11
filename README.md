@@ -92,6 +92,20 @@ El scratch de 256 bytes es estático; no se reserva por frame ni añade una cola
 Se conservan baudrate, pines, buffers de driver/audio, prioridades y protocolo.
 `UART_RX` permite verificar el tamaño medio/máximo real de las lecturas.
 
+El umbral de interrupción RX se configura en `EarsConfig::RX_FIFO_FULL_THRESHOLD`
+a **64 bytes**. En la FIFO de 128 bytes deja unos 694 us de margen a 921600
+baudios, frente a los 87 us del valor predeterminado de 120. Esto aumenta la
+frecuencia de interrupciones; la próxima captura debe verificar `fifo_threshold=64`
+en `UART_RX`, los incrementos de `UART_ERR fifo`/`rx_missing` durante el envío y
+el consumo de CPU. El margen no garantiza ausencia de desbordamientos.
+
+Si persisten, comparar una segunda prueba con `PIUU_PERFORMANCE_DIAGNOSTICS=0`
+y `PIUU_UART_DIAGNOSTICS=1` para aislar el efecto de las mediciones de rendimiento.
+Las capturas de tareas alcanzaron 8,4 ms en la prueba del 11 de octubre; ese tiempo
+no demuestra por sí solo que las interrupciones estuvieran bloqueadas ni que
+causaran las pérdidas. El buffer de driver no se llenó (`ring_full=0`); aumentar
+su capacidad no resuelve directamente un desbordamiento previo en la FIFO.
+
 ## Optional UART investigation
 
 `PIUU_UART_DIAGNOSTICS=1` in `platformio.ini` enables the new EARS link probes.

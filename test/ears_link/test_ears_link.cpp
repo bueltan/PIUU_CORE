@@ -27,6 +27,7 @@ int main() {
     assert(!earsLinkRequestStreaming(true) && !earsLinkPeerOnline());
     assert(earsLinkBegin() && earsLinkBegin());
     assert(Serial2.baud==921600 && Serial2.rxPin==16 && Serial2.txPin==17 && Serial2.rxBuffer==4096);
+    assert(Serial2.fifoThreshold==64);
     assert(Serial.baud==0 && Serial.output().empty()); // USB console untouched.
     waitFor([]{return Serial2.output().size()>=8;});
     assert(Serial2.output()==std::vector<uint8_t>({'C','M','D','!',1,2,0,0}));
