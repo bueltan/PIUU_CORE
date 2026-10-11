@@ -18,3 +18,19 @@ bool earsLinkPeerOnline();
 EarsLinkStats earsLinkStats();
 struct EarsQueueStats { uint32_t audio, audioPeak, events, eventPeak; };
 EarsQueueStats earsLinkQueueStats();
+struct EarsRxStats { uint32_t bytes,blocks,maxBlock; };
+EarsRxStats earsLinkRxStats();
+
+#include "diagnostics/config.h"
+struct EarsUartStats { uint32_t fifoOverflow,bufferFull,frameError,parityError,breakError,
+    rxGaps,rxMissing,sequenceResets,samplesDropped; };
+struct EarsGapSample { uint32_t timeMs,expected,received,order; bool consumer; };
+#if PIUU_UART_DIAGNOSTICS
+EarsUartStats earsLinkUartStats();
+bool earsLinkTakeGapSample(EarsGapSample &sample);
+void earsLinkRecordConsumerGap(uint32_t expected,uint32_t received,uint32_t order);
+#else
+inline EarsUartStats earsLinkUartStats() { return {}; }
+inline bool earsLinkTakeGapSample(EarsGapSample &) { return false; }
+inline void earsLinkRecordConsumerGap(uint32_t,uint32_t,uint32_t) {}
+#endif

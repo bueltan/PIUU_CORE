@@ -58,6 +58,53 @@ int main() {
     Serial2.inject(event(0x80,{1}));waitFor([]{return earsLinkPeerOnline() && earsLinkStats().remoteStreaming;});
     const auto previous=earsLinkStats().commandsSent;assert(earsLinkRequestStreaming(false));
     waitFor([&]{return earsLinkStats().commandsSent>previous;});bytes=Serial2.output();assert(bytes[bytes.size()-3]==2);
+    // Short driver reads and a packet split across separate RX iterations.
+    Serial2.readLimit.store(7);
+    const auto partial=pcm(999);const auto readBefore=Serial2.bytesRead.load();
+    Serial2.inject(std::vector<uint8_t>(partial.begin(),partial.begin()+7));
+    waitFor([&]{return Serial2.bytesRead.load()>=readBefore+7;});
+    assert(!earsLinkTake(m));
+    Serial2.inject(std::vector<uint8_t>(partial.begin()+7,partial.end()));
+    waitFor([&]{return earsLinkTake(m);});
+    assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==999 && m.audio.samples[319]==-2);
+    assert(Serial2.byteReads.load()==0 && Serial2.maxRequested.load()==EarsConfig::RX_READ_CHUNK_BYTES);
+    assert(earsLinkRxStats().blocks>0 && earsLinkRxStats().maxBlock<=EarsConfig::RX_READ_CHUNK_BYTES);
+    Serial2.readLimit.store(256);
+#if PIUU_UART_DIAGNOSTICS
+    const uint32_t missingBefore=earsLinkUartStats().rxMissing;
+    Serial2.inject(event(0x80,{1}));Serial2.inject(pcm(1002));
+    waitFor([&]{return earsLinkTake(m);});
+    assert(m.audio.sequence==1002 && earsLinkUartStats().rxMissing==missingBefore+2);
+    // Backwards sequence is a reset observation; uint32 wrap itself is not a gap.
+    Serial2.inject(pcm(UINT32_MAX));waitFor([&]{return earsLinkTake(m);});
+    const auto resets=earsLinkUartStats().sequenceResets;
+    const auto missing=earsLinkUartStats().rxMissing;
+    Serial2.inject(pcm(0));waitFor([&]{return earsLinkTake(m);});
+    assert(earsLinkUartStats().sequenceResets==resets && earsLinkUartStats().rxMissing==missing);
+    Serial2.inject(event(0x80,{0}));Serial2.inject(event(0x80,{1}));Serial2.inject(pcm(2000));
+    waitFor([&]{return earsLinkTake(m);});
+    assert(earsLinkUartStats().rxMissing==missing); // deliberate stream restart
+    assert(Serial2.errorCallback!=nullptr);
+    Serial2.emitError(UART_FIFO_OVF_ERROR);Serial2.emitError(UART_BUFFER_FULL_ERROR);
+    Serial2.emitError(UART_FRAME_ERROR);Serial2.emitError(UART_PARITY_ERROR);
+    Serial2.emitError(UART_BREAK_ERROR);Serial2.emitError(UART_NO_ERROR);
+    const auto uart=earsLinkUartStats();
+    assert(uart.fifoOverflow==1 && uart.bufferFull==1 && uart.frameError==1 && uart.parityError==1 && uart.breakError==1);
+    assert(uart.rxGaps>=1 && uart.rxMissing>=12);
+    EarsGapSample gap{};bool found=false;
+    while(earsLinkTakeGapSample(gap)) {
+        if(!gap.consumer && gap.expected==8 && gap.received==20)found=true;
+    }
+    assert(found);
+    // Fixed diagnostic storage cannot grow or interfere with audio queues.
+    for(unsigned i=0;i<10;++i)earsLinkRecordConsumerGap(i,i+1,100+i);
+    assert(earsLinkUartStats().samplesDropped>=2);
+    unsigned samples=0;
+    while(earsLinkTakeGapSample(gap)) { assert(gap.consumer);++samples; }
+    assert(samples==8);
+#else
+    assert(Serial2.errorCallback==nullptr);
+#endif
     hostStopWorkers();
     puts("PASS: UART2 pin/baud setup, command refresh, ACK validation, ordered queues, saturation isolation and peer timeout");
 }

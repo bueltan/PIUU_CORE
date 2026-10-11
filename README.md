@@ -49,6 +49,22 @@ Diagnóstico por USB a 115200: eventos de conversación/controles con IDs y
 resúmenes EARS, UDP, audio y recursos cada cinco segundos, escalonados.
 Ver [captura e interpretación de logs](docs/DIAGNOSTICOS_TEST_INTEGRADO.md).
 
+Para guardar los logs de las tres placas automáticamente, iniciar **antes de
+conectarlas** (desde esta carpeta):
+
+```sh
+~/.platformio/penv/bin/python tools/capture_serial.py
+```
+
+Espera los puertos USB, reconecta y guarda `core.log`, `keyword.log`, `ears.log`
+y `capture.log` en una carpeta nueva dentro de `logs/integrated/` (ignorada por Git).
+Terminar con Ctrl+C. Cerrar otros monitores antes de capturar y detener la captura
+antes de subir firmware. No requiere modificar ni cargar las placas.
+
+Para el test con archivo en EARS: backend disponible → encender CORE y KEYWORD →
+esperar a que CORE conecte con el servidor y KEYWORD indique `[BOOT] listo` →
+encender EARS. Así no se pierde el inicio del archivo por arrancar KEYWORD tarde.
+
 ## Verificación
 
 Desde la carpeta Projects:
@@ -66,3 +82,39 @@ Las métricas de rendimiento están activas para las pruebas actuales. En
 conservando los diagnósticos habituales de conexión y errores.
 Consultar [métricas de rendimiento](docs/DIAGNOSTICOS_TEST_INTEGRADO.md#rendimiento-de-core)
 para interpretar CPU, stack, tiempos de audio y buffers.
+
+### Recepción UART por bloques
+
+CORE lee EARS sin espera en bloques de hasta 256 bytes y procesa un máximo de
+1024 bytes por ciclo antes de ceder CPU. El parser admite cabeceras/payloads
+fragmentados, eventos intercalados y varios paquetes en la misma lectura.
+El scratch de 256 bytes es estático; no se reserva por frame ni añade una cola.
+Se conservan baudrate, pines, buffers de driver/audio, prioridades y protocolo.
+`UART_RX` permite verificar el tamaño medio/máximo real de las lecturas.
+
+## Optional UART investigation
+
+`PIUU_UART_DIAGNOSTICS=1` in `platformio.ini` enables the new EARS link probes.
+Set it to `0` and rebuild to remove their counters, sample ring, driver callback,
+Arduino UART event task and logs. Existing diagnostics use `PIUU_DIAGNOSTICS`
+and `PIUU_PERFORMANCE_DIAGNOSTICS` separately.
+
+- `UART_ERR`: cumulative FIFO overflow, driver ring-full, framing, parity and
+  break events; RX sequence gaps/missing frames, sequence resets and omitted samples.
+- `UART_GAP`: exact expected/received sequence, arrival order and device timestamp.
+  `stage=rx` observes the parser before application queues; `stage=app` observes
+  the conversation consumer. Matching samples are the same gap, not two losses.
+  A gap only in the application suggests application queue/admission handling.
+  Stream acknowledgements that change state reset the RX baseline; repeated START
+  acknowledgements do not. Application counters retain their own conversation boundary.
+
+A fixed eight-sample ring bounds storage. Logs drain at most eight samples per
+five seconds, spaced by at least 80 ms. `sample_drop` makes omitted detail visible.
+The RX worker/event callback never formats these logs; loop() prints them.
+The error callback creates an additional Arduino UART event task while enabled;
+RAM/CPU overhead must be measured on hardware. Driver events are observations,
+not byte-integrity guarantees: PCM! still has no checksum.
+
+For correlated tests upload CORE and EARS with their diagnostics enabled. Keep
+KEYWORD firmware and the same test audio: existing KEYWORD discontinuity/queue
+logs plus EARS's `wake_*` timings cover that branch without changing its model.

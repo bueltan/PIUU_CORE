@@ -37,6 +37,40 @@ int main() {
         assert(received.size()==1 && received[0].sequence==0xf0e1d2c3 && received[0].payload.size()==640);
         assert(!memcmp(received[0].payload.data(),pcm,640));
     }
+    // Every split through magic/header/PCM must work with bulk driver reads.
+    for(size_t split=0;split<=frame.size();++split) {
+        EarsProtocol::Parser bulk(receive,nullptr);received.clear();
+        bulk.feed(frame.data(),split,now);
+        bulk.feed(frame.data()+split,frame.size()-split,now+1);
+        assert(received.size()==1 && received[0].sequence==0xf0e1d2c3);
+        assert(received[0].payload.size()==640 && !memcmp(received[0].payload.data(),pcm,640));
+    }
+    // Bulk and byte paths must agree across noise, discarded frames, embedded
+    // magic and several events in one read.
+    std::vector<uint8_t> stream={'x','P','C','P','E','V'};
+    const auto append=[&](const std::vector<uint8_t> &part) { stream.insert(stream.end(),part.begin(),part.end()); };
+    append(event(42,{'P','C','M','!','E','V','T','!'}));append(frame);
+    append(event(1));append(event(1,{'E','V','T','!',1,1,0,0},2));
+    append(event(1,std::vector<uint8_t>(33,'P')));
+    auto zero=frame;zero.resize(10);zero[8]=zero[9]=0;append(zero);append(event(3));
+    EarsProtocol::Parser reference(receive,nullptr);received.clear();feed(reference,stream);
+    const auto expected=received;
+    for(size_t chunk: {1u,2u,3u,7u,8u,9u,10u,31u,127u,256u,650u,4096u}) {
+        EarsProtocol::Parser bulk(receive,nullptr);received.clear();
+        for(size_t offset=0;offset<stream.size();) {
+            const size_t count=stream.size()-offset<chunk ? stream.size()-offset : chunk;
+            bulk.feed(stream.data()+offset,count,now);offset+=count;
+        }
+        assert(bulk.rejected()==reference.rejected() && received.size()==expected.size());
+        for(size_t i=0;i<expected.size();++i) {
+            assert(received[i].kind==expected[i].kind && received[i].sequence==expected[i].sequence);
+            assert(received[i].code==expected[i].code && received[i].payload==expected[i].payload);
+        }
+    }
+    EarsProtocol::Parser partial(receive,nullptr);received.clear();
+    partial.feed(frame.data(),20,10);partial.feed(nullptr,0,1000);
+    assert(partial.expire(110,100)); // Empty chunks cannot extend timeout.
+    partial.feed(frame.data(),frame.size(),111);assert(received.size()==1);
     EarsProtocol::Parser parser(receive,nullptr);received.clear();
     feed(parser,{'x','P','C','P','E','V'});feed(parser,event(42,{'P','C','M','!','E','V','T','!'}));
     feed(parser,frame);feed(parser,event(1));assert(received.size()==3 && received[0].code==42);

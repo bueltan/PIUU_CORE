@@ -16,6 +16,31 @@ QueueHandle_t audioQueue=nullptr,eventQueue=nullptr;
 TaskHandle_t worker=nullptr;
 std::atomic<uint32_t> order{0},lastPacketMs{0},request{0};
 std::atomic_bool seenPeer{false},remoteStreaming{false};
+#if PIUU_UART_DIAGNOSTICS
+std::atomic<uint32_t> fifoOverflow{0},bufferFull{0},frameError{0},parityError{0},breakError{0};
+std::atomic<uint32_t> rxGaps{0},rxMissing{0},sequenceResets{0},samplesDropped{0};
+// Fixed sample ring shared by RX worker and application; packetMutex protects it.
+EarsGapSample gapSamples[8];
+size_t gapHead=0,gapCount=0;
+bool haveRxSequence=false;
+uint32_t expectedRxSequence=0;
+void sampleGap(bool consumer,uint32_t expected,uint32_t received,uint32_t arrival) {
+    if(gapCount==8) { ++samplesDropped;return; }
+    gapSamples[(gapHead+gapCount)%8]={millis(),expected,received,arrival,consumer};
+    ++gapCount;
+}
+void uartError(hardwareSerial_error_t error) {
+    // Driver event task: counters only, no printing, allocation or UART reads.
+    switch(error) {
+    case UART_FIFO_OVF_ERROR: ++fifoOverflow;break;
+    case UART_BUFFER_FULL_ERROR: ++bufferFull;break;
+    case UART_FRAME_ERROR: ++frameError;break;
+    case UART_PARITY_ERROR: ++parityError;break;
+    case UART_BREAK_ERROR: ++breakError;break;
+    default: break;
+    }
+}
+#endif
 uint32_t localAckErrors=0; // worker-only
 std::atomic<uint32_t> audioReceived{0},audioDropped{0},eventDropped{0},parseRejected{0},commandsSent{0};
 #if PIUU_PERFORMANCE_DIAGNOSTICS
@@ -34,6 +59,15 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
     const uint32_t serialOrder=order.fetch_add(1)+1;
     lastPacketMs.store(millis());seenPeer.store(true);
     if (packet.kind==EarsProtocol::Kind::Pcm) {
+#if PIUU_UART_DIAGNOSTICS
+        if(haveRxSequence && packet.sequence!=expectedRxSequence) {
+            const uint32_t distance=packet.sequence-expectedRxSequence;
+            if(distance<0x80000000u) { ++rxGaps;rxMissing.fetch_add(distance); }
+            else ++sequenceResets;
+            sampleGap(false,expectedRxSequence,packet.sequence,serialOrder);
+        }
+        haveRxSequence=true;expectedRxSequence=packet.sequence+1;
+#endif
         EarsAudioFrame frame{};frame.order=serialOrder;frame.sequence=packet.sequence;
         // Explicit little endian conversion, independent of packed struct alignment.
         for (size_t i=0;i<PCM_FRAME_SAMPLES;++i) {
@@ -47,10 +81,17 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
 #endif
     } else {
         if (packet.code==uint8_t(EarsProtocol::Event::StreamState)) {
+#if PIUU_UART_DIAGNOSTICS
+            // Repeated START acknowledgements are not a stream restart.
+            if(!packet.payload[0] || !remoteStreaming.load()) haveRxSequence=false;
+#endif
             remoteStreaming.store(packet.payload[0]!=0);
             xSemaphoreGive(packetMutex);
             return; // Transport acknowledgement; never a conversation end event.
         }
+#if PIUU_UART_DIAGNOSTICS
+        if(packet.code==uint8_t(EarsProtocol::Event::Wake) && !remoteStreaming.load()) haveRxSequence=false;
+#endif
         EarsEvent event{};event.order=serialOrder;event.code=packet.code;event.size=packet.size;
         if (packet.size) memcpy(event.payload,packet.payload,packet.size);
         if (xQueueSend(eventQueue,&event,0)!=pdTRUE) ++eventDropped;
@@ -61,6 +102,11 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
     xSemaphoreGive(packetMutex);
 }
 EarsProtocol::Parser parser(receive,nullptr);
+// Worker owns this scratch buffer; no per-read allocation or additional queue.
+uint8_t rxBlock[EarsConfig::RX_READ_CHUNK_BYTES];
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+std::atomic<uint32_t> rxBytes{0},rxBlocks{0},rxMaxBlock{0};
+#endif
 void run(void*) {
     uint32_t applied=UINT32_MAX,lastCommand=0;
     for (;;) {
@@ -75,9 +121,20 @@ void run(void*) {
             }
         }
         parser.expire(now,EarsConfig::RX_TIMEOUT_MS);
-        for (size_t n=0;n<1024 && serial.available()>0;++n) {
-            const int byte=serial.read();if (byte<0) break;
-            parser.feed(uint8_t(byte),millis());
+        for (size_t consumed=0;consumed<EarsConfig::RX_WORK_BUDGET_BYTES;) {
+            const size_t remaining=EarsConfig::RX_WORK_BUDGET_BYTES-consumed;
+            const size_t capacity=remaining<sizeof(rxBlock) ? remaining : sizeof(rxBlock);
+            // HardwareSerial::read(buffer,size) uses timeout=0: it returns what
+            // is available, including partial chunks, without waiting to fill.
+            // Avoid available()/read()/millis() and driver locks for every byte.
+            const size_t size=serial.read(rxBlock,capacity);
+            if (!size) break;
+            parser.feed(rxBlock,size,millis());
+            consumed+=size;
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+            rxBytes.fetch_add(size);++rxBlocks;
+            if (size>rxMaxBlock.load()) rxMaxBlock.store(size);
+#endif
         }
         // Parser owns its counter; expose only an atomic snapshot to loop.
         parseRejected.store(parser.rejected()+localAckErrors);
@@ -103,6 +160,9 @@ bool earsLinkBegin() {
         vQueueDelete(audioQueue);vQueueDelete(eventQueue);vSemaphoreDelete(packetMutex);
         audioQueue=eventQueue=nullptr;packetMutex=nullptr;return false;
     }
+#if PIUU_UART_DIAGNOSTICS
+    serial.onReceiveError(uartError);
+#endif
     serial.begin(EarsConfig::BAUD,SERIAL_8N1,EarsConfig::RX_PIN,EarsConfig::TX_PIN);
     if (!serial || xTaskCreatePinnedToCore(run,"earsUart",EarsConfig::WORKER_STACK_BYTES,nullptr,2,&worker,0)!=pdPASS) {
         serial.end();vQueueDelete(audioQueue);vQueueDelete(eventQueue);
@@ -159,3 +219,29 @@ EarsQueueStats earsLinkQueueStats() {
     return {0,0,0,0};
 #endif
 }
+
+EarsRxStats earsLinkRxStats() {
+#if PIUU_PERFORMANCE_DIAGNOSTICS
+    return {rxBytes.load(),rxBlocks.load(),rxMaxBlock.load()};
+#else
+    return {0,0,0};
+#endif
+}
+
+#if PIUU_UART_DIAGNOSTICS
+EarsUartStats earsLinkUartStats() {
+    return {fifoOverflow.load(),bufferFull.load(),frameError.load(),parityError.load(),breakError.load(),
+        rxGaps.load(),rxMissing.load(),sequenceResets.load(),samplesDropped.load()};
+}
+bool earsLinkTakeGapSample(EarsGapSample &sample) {
+    if(!packetMutex || xSemaphoreTake(packetMutex,0)!=pdTRUE)return false;
+    const bool found=gapCount!=0;
+    if(found) { sample=gapSamples[gapHead];gapHead=(gapHead+1)%8;--gapCount; }
+    xSemaphoreGive(packetMutex);return found;
+}
+void earsLinkRecordConsumerGap(uint32_t expected,uint32_t received,uint32_t arrival) {
+    if(!packetMutex || xSemaphoreTake(packetMutex,portMAX_DELAY)!=pdTRUE)return;
+    sampleGap(true,expected,received,arrival);
+    xSemaphoreGive(packetMutex);
+}
+#endif

@@ -20,6 +20,58 @@ Las grabaciones WAV configuradas en el backend siguen siendo independientes.
 
 ## Capturar
 
+### Captura automática de las tres consolas
+
+Antes de conectar las placas, ejecutar desde `PIUU_CORE`:
+
+```sh
+~/.platformio/penv/bin/python tools/capture_serial.py
+```
+
+El Python de PlatformIO ya incluye `pyserial`. Si se utiliza otro entorno, necesita
+esa dependencia. El programa espera `/dev/esp32-core`, `/dev/esp32-keyword` y
+`/dev/esp32-ears`; cada consola funciona independientemente de las otras.
+Al desconectar o reconectar, conserva el mismo archivo de esa sesión y registra
+la transición. Ctrl+C termina y guarda las líneas pendientes.
+
+Genera una carpeta nueva `logs/integrated/<fecha-UTC>/` con `core.log`,
+`keyword.log`, `ears.log` y `capture.log` (conexiones/desconexiones y errores).
+Cada línea tiene hora UTC de **recepción en el PC**, común a las tres consolas;
+no es la hora exacta en que la placa produjo el mensaje. Conserva también los
+timestamps propios del firmware cuando existen. No decodifica automáticamente
+backtraces: conservar el ELF del firmware cargado si ocurre un crash.
+
+Opciones de ejemplo:
+
+```sh
+~/.platformio/penv/bin/python tools/capture_serial.py --output /tmp/walle-tests
+~/.platformio/penv/bin/python tools/capture_serial.py --core /dev/ttyUSB0 --ears /dev/ttyACM0 --keyword /dev/ttyACM1
+```
+
+Cerrar los otros monitores serie antes de capturar. Detener el capturador antes
+de cargar firmware. Solicita acceso exclusivo y mantiene RTS/DTR desactivados,
+sin emitir una secuencia de reset. Algunos drivers pueden producir transiciones
+al abrir el puerto. La captura comienza cuando USB enumera y permite abrirlo:
+no puede recuperar mensajes anteriores ni garantizar las primeras líneas ROM.
+Los delays de arranque actuales facilitan capturar los logs de la aplicación.
+
+Orden recomendado para el ensayo actual con `FILE_REPLAY`:
+
+1. Dejar el backend funcionando e iniciar el capturador.
+2. Encender CORE y KEYWORD. Esperar a que CORE conecte al servidor y KEYWORD
+   muestre `[BOOT] listo` en su archivo.
+3. Encender EARS. Tiene aproximadamente cuatro segundos de espera antes de
+   iniciar audio; KEYWORD ya estará preparado para recibir el primer frame.
+
+No cambian firmware, buffers ni protocolo. Pruebas del capturador (puerto virtual,
+sin acceder a placas reales):
+
+```sh
+~/.platformio/penv/bin/python test/serial_capture/test_capture.py
+```
+
+### Captura manual como alternativa
+
 En tres terminales, desde cada proyecto correspondiente. Los dispositivos deben
 existir; adaptar el puerto si no están disponibles los alias configurados.
 
@@ -183,3 +235,38 @@ Validación local: suite host (incluida interoperabilidad CORE/backend), compila
 sin métricas no contiene sus prefijos. En esta configuración, activarlas añade
 4216 bytes de RAM estática (122752 bytes totales frente a 118536 desactivadas).
 Los porcentajes reales de CPU y el efecto sobre el audio requieren el test en placa.
+
+### Comparar la optimización UART
+
+La captura base `20261011T185528.320755Z` mostró CPU0 hasta 98,6%, `earsUart`
+hasta 78,2%, 42 frames de huecos UART, 1 rechazo del parser y dos pausas de
+rebuffer (1819 y 1540 ms). Ver `ANALISIS_TEST_20261011.md`.
+
+CORE ahora usa `HardwareSerial::read(buffer,size)` con timeout cero (API del SDK
+instalado). Lee hasta 256 bytes por llamada, acepta lecturas parciales y cede
+CPU después de un máximo de 1024 bytes por ciclo. No espera a llenar el bloque.
+El parser copia spans PCM y descarta spans inválidos por longitud; cabeceras,
+resincronización y orden PCM/EVT mantienen su semántica. No cambian los tamaños
+de colas, jitter, buffers RX/TX del driver, baudrate, prioridades ni afinidad.
+Solo se añade scratch estático de 256 bytes y los contadores de diagnóstico.
+
+`UART_RX` se imprime cada cinco segundos con métricas activas:
+- `bytes`: bytes entregados al parser desde el arranque, incluidos eventos.
+- `blocks`: lecturas no vacías; `avg_block`: media entera acumulada bytes/bloques.
+- `max_block`: mayor lectura no vacía; `chunk`: límite por llamada.
+- `budget`: máximo de bytes procesados por ciclo antes de ceder CPU.
+
+Los contadores son snapshots concurrentes y desaparecen de la instrumentación
+al compilar con `PIUU_PERFORMANCE_DIAGNOSTICS=0`. En reposo no aumentan.
+
+Repetir con el mismo archivo y secuencia de encendido; solo cargar CORE.
+Comparar CPU de `earsUart`/núcleo 0, `EARS gaps/bad/drop`, `UART_RX` y
+`BUFFERS rebuf_n/total_ms` durante audio activo. Verificar también el audio
+escuchado. Que las pruebas host y las compilaciones pasen no demuestra por sí
+solo que desaparezcan los cortes en hardware; correlacionar backend si persisten.
+
+Pruebas host ampliadas: todos los 651 puntos de división de un frame PCM,
+comparación byte/bloque en 12 tamaños de fragmento (1–4096 bytes), payloads con
+magic incrustado, eventos/ruido/versiones/longitudes inválidas, timeout con lectura
+vacía y driver con lecturas cortas de 7 bytes. La prueba del worker comprueba
+que ya no usa la lectura de un byte y respeta el límite de 256 bytes por llamada.

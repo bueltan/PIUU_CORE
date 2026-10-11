@@ -83,7 +83,7 @@ Measure::~Measure() {
 void performancePoll() {
     static uint32_t lastSnapshot=0,lastLine=0;
     static Timing pending[2];
-    static unsigned pendingNext=3;
+    static unsigned pendingNext=4;
     const uint32_t now=millis();
     if (uint32_t(now-lastSnapshot)>=5000) {
         lastSnapshot=now;
@@ -118,6 +118,15 @@ void performancePoll() {
             (unsigned long)ears.events,unsigned(EarsConfig::EVENT_QUEUE_ITEMS),(unsigned long)ears.eventPeak,
             (unsigned long)buffer.buffered,unsigned(JITTER_SLOTS),(unsigned long)buffer.peak,valid,
             (unsigned long)buffer.rebufferCount,(unsigned long)buffer.totalMs,(unsigned long)buffer.maxMs,(unsigned long)buffer.activeMs);
+        return;
+    }
+    if (pendingNext==3) {
+        ++pendingNext;
+        const auto rx=earsLinkRxStats();
+        appLog().printf("[UART_RX t=%lu] bytes=%lu blocks=%lu avg_block=%lu max_block=%lu chunk=%u budget=%u\n",
+            (unsigned long)now,(unsigned long)rx.bytes,(unsigned long)rx.blocks,
+            (unsigned long)(rx.blocks?rx.bytes/rx.blocks:0),(unsigned long)rx.maxBlock,
+            unsigned(EarsConfig::RX_READ_CHUNK_BYTES),unsigned(EarsConfig::RX_WORK_BUDGET_BYTES));
         return;
     }
 #if configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS

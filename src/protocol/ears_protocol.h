@@ -25,6 +25,9 @@ public:
     using Handler=void(*)(void*,const PacketView&);
     Parser(Handler handler,void *context):handler_(handler),context_(context) {}
     void feed(uint8_t byte,uint32_t now);
+    // A chunk may end anywhere or contain several PCM/events. Payload is copied
+    // in spans; headers keep exactly the same validation and resynchronization.
+    void feed(const uint8_t *bytes,size_t size,uint32_t now);
     bool expire(uint32_t now,uint32_t timeoutMs);
     uint32_t rejected() const { return rejected_; }
 private:

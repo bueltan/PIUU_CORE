@@ -32,6 +32,12 @@ uint32_t earsLinkReceivedOrder() { return order; }
 bool earsLinkRequestStreaming(bool value) { streaming=value;commands.push_back(value);return true; }
 EarsLinkStats earsLinkStats() { return {0,0,drops,0,0,streaming}; }
 bool earsLinkTake(EarsMessage &message) { if(incoming.empty()) return false;message=incoming.front();incoming.pop_front();return true; }
+#if PIUU_UART_DIAGNOSTICS
+static unsigned gapSamples=0;
+void earsLinkRecordConsumerGap(uint32_t expected,uint32_t received,uint32_t) {
+    assert(received!=expected);++gapSamples;
+}
+#endif
 static bool sender(const uint8_t *p,size_t size) { sent.emplace_back(p,p+size);return true; }
 static void pcm(uint32_t seq,int16_t value=123) {
     EarsMessage m{};m.kind=EarsProtocol::Kind::Pcm;m.audio.order=++order;m.audio.sequence=seq;
@@ -61,6 +67,9 @@ int main() {
     pcm(99);earsSessionPoll();assert(conversationState()==ConversationState::Idle && sent.empty());
     peer=true;event(1,{17});pcm(100);pcm(102,-321);
     assert(earsSessionPoll()==EarsSessionNotice::Started && streaming && sent.size()==2);
+#if PIUU_UART_DIAGNOSTICS
+    assert(gapSamples==1);
+#endif
     conversationServerEvent(ConversationEvent::Ready,0,0);
     assert(be32(sent[0].data()+6)==0 && be32(sent[1].data()+6)==2 && be32(sent[1].data()+10)==640);
     int16_t sample=0;memcpy(&sample,sent[1].data()+18,2);assert(sample==-321);

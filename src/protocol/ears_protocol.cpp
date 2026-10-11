@@ -19,6 +19,23 @@ void Parser::deliver() {
     if (handler_) handler_(context_,packet);
     reset();
 }
+void Parser::feed(const uint8_t *bytes,size_t size,uint32_t now) {
+    while (size) {
+        if (state_!=Payload && state_!=Discard) {
+            feed(*bytes++,now);--size;
+            continue;
+        }
+        lastByte_=now;
+        const size_t remaining=length_-used_;
+        const size_t copied=size<remaining ? size : remaining;
+        if (state_==Payload) memcpy(payload_+used_,bytes,copied);
+        bytes+=copied;size-=copied;used_+=copied;
+        if (used_==length_) {
+            if (state_==Payload) deliver();
+            else reset();
+        }
+    }
+}
 void Parser::feed(uint8_t byte,uint32_t now) {
     lastByte_=now;
     if (state_==Search) {

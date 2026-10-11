@@ -1,5 +1,6 @@
 #include "hardware/app_log.h"
 #include "diagnostics/performance.h"
+#include "diagnostics/uart.h"
 #include <Arduino.h>
 #include "hardware/display_hal.h"
 #include "hardware/touch_hal.h"
@@ -81,6 +82,7 @@ void loop() {
     }
 #endif
     Diagnostics::performancePoll();
+    Diagnostics::uartPoll();
     uiStatusRefreshStartScreen();
     delay(20);
 }

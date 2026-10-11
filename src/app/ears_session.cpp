@@ -50,7 +50,9 @@ void handleAudio(const EarsAudioFrame &frame) {
             // or the stream is corrupt; never advance the server by billions.
             conversationAbort();notice=EarsSessionNotice::Restarted;return;
         }
-        if (delta>1) { stats.sequenceGaps+=delta-1;audioUplinkSkipFrames(delta-1); }
+        if (delta>1) {
+            earsLinkRecordConsumerGap(lastSequence+1,frame.sequence,frame.order);
+            stats.sequenceGaps+=delta-1;audioUplinkSkipFrames(delta-1); }
     }
     haveSequence=true;lastSequence=frame.sequence;
     conversationObserveAudio(frame.samples,PCM_FRAME_SAMPLES);
