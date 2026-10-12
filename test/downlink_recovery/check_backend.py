@@ -3,9 +3,9 @@ import sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 from bridge.config import BridgeConfig
-from bridge.conversation_protocol import Kind, Packet, decode, encode
-from bridge.downlink_recovery import DownlinkRecovery
-from bridge.protocol import OpusPacketFormat
+from bridge.transport.protocols.conversation import Kind, Packet, decode, encode
+from bridge.transport.downlink_recovery import DownlinkRecovery
+from bridge.transport.protocols.audio import OpusPacketFormat
 request=decode(Path(sys.argv[2]).read_bytes())
 assert request.kind==Kind.DOWNLINK_NACK
 sent=[];recovery=DownlinkRecovery(BridgeConfig(),lambda *p:sent.append(p))

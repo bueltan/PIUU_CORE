@@ -67,7 +67,7 @@ if [[ $# -gt 0 ]]; then
     python3 test/downlink_recovery/check_backend.py "$backend_root/src" "$task_test_dir/downlink-nack.bin" "$task_test_dir/downlink-end.bin"
     "$task_test_dir/downlink_wire" read "$task_test_dir/downlink-end.bin"
     python3 test/session_protocol/check_python_recovery.py "$task_test_dir/session_client" "$backend_root/src"
-    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/conversation_protocol.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
+    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/transport/protocols/conversation.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     "$task_test_dir/session_protocol" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     python3 test/protocol/check_python_bridge.py "$backend_main" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"
     "$task_test_dir/protocol" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"

@@ -13,9 +13,11 @@ tree = ast.parse(server.read_text())
 packet_class = next((node for node in tree.body
                     if isinstance(node, ast.ClassDef) and node.name == "BasePacketFormat"), None)
 if packet_class is None:
-    # The modular backend re-exports the contract from bridge.protocol.
+    # The modular backend re-exports the contract from bridge.transport.protocols.audio.
     # Inspect that class without importing the server or loading its dependencies.
-    protocol_file = server.parent / "bridge" / "protocol.py"
+    protocol_file = server.parent / "bridge" / "transport" / "protocols" / "audio.py"
+    if not protocol_file.exists():
+        protocol_file = server.parent / "bridge" / "protocol.py"
     tree = ast.parse(protocol_file.read_text())
     packet_class = next(node for node in tree.body
                         if isinstance(node, ast.ClassDef) and node.name == "BasePacketFormat")

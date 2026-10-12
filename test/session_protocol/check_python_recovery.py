@@ -6,9 +6,9 @@ import tempfile
 from pathlib import Path
 sys.path.insert(0,sys.argv[2])
 from bridge.config import BridgeConfig
-from bridge.ingress import InboundSession
-from bridge.protocol import PcmPacketFormat
-from bridge.conversation_protocol import Identity,Packet,Kind,encode,decode
+from bridge.transport.ingress import InboundSession
+from bridge.transport.protocols.audio import PcmPacketFormat
+from bridge.transport.protocols.conversation import Identity,Packet,Kind,encode,decode
 
 async def main():
     config=BridgeConfig(); fmt=PcmPacketFormat(config); output=[]; tasks=[]

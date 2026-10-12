@@ -2,6 +2,8 @@
 
 ## 2026-10-12
 
+- Update offline cross-language tests for the backend package layout; firmware unchanged.
+
 - Disable DAC diagnostics by default.
 - Add bounded Opus downlink NACK requests and acknowledged audio END boundaries.
 - Drain missing tail frames with bounded recovery/concealment; reject stale retries.
