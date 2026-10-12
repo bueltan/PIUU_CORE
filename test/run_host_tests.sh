@@ -39,8 +39,11 @@ g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../
 g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/ears_session/test_ears_session.cpp test/services/mocks/runtime.cpp src/app/ears_session.cpp src/app/conversation.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/ears_session"
 "$task_test_dir/ears_session"
 
-for uart_diagnostics in 1 0; do
-    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_TEST_SERIAL_UART -DPIUU_UART_DIAGNOSTICS="$uart_diagnostics" -I test/ears_link/mocks -I test/services/mocks -I src test/ears_link/test_ears_link.cpp test/services/mocks/runtime.cpp src/input/ears_link.cpp src/protocol/ears_protocol.cpp -o "$task_test_dir/ears_link"
+for diagnostics_mode in perf uart off; do
+    performance_diagnostics=0; uart_diagnostics=0
+    if [[ "$diagnostics_mode" == perf ]]; then performance_diagnostics=1; fi
+    if [[ "$diagnostics_mode" == uart ]]; then uart_diagnostics=1; fi
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_TEST_SERIAL_UART -DPIUU_PERFORMANCE_DIAGNOSTICS="$performance_diagnostics" -DPIUU_UART_DIAGNOSTICS="$uart_diagnostics" -I test/ears_link/mocks -I test/services/mocks -I src test/ears_link/test_ears_link.cpp test/services/mocks/runtime.cpp src/input/ears_link.cpp src/protocol/ears_protocol.cpp -o "$task_test_dir/ears_link"
     "$task_test_dir/ears_link"
 done
 

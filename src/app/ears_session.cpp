@@ -69,6 +69,14 @@ void earsSessionSetExtraEventSink(EarsExtraEventSink sink) { extraSink=sink; }
 EarsSessionStats earsSessionStats() { return stats; }
 EarsSessionNotice earsSessionPoll() {
     notice=EarsSessionNotice::None;
+#if PIUU_UART_DIAGNOSTICS
+    static bool havePoll=false;
+    static uint32_t previousPoll=0;
+    const uint32_t now=millis();
+    if(havePoll && uint32_t(now-previousPoll)>stats.pollGapMaxMs)
+        stats.pollGapMaxMs=uint32_t(now-previousPoll);
+    previousPoll=now;havePoll=true;
+#endif
     const uint32_t dropped=earsLinkStats().eventDropped;
     if (dropped!=controlDrops) {
         controlDrops=dropped;conversationAbort();

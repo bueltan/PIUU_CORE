@@ -59,12 +59,14 @@ void loop() {
         switch(diagnosticsPhase) {
         case 0: {
         const auto link=earsLinkStats();const auto session=earsSessionStats();
-        appLog().printf("[EARS t=%lu] peer=%d streaming=%d rx=%lu drop=%lu evt_drop=%lu bad=%lu cmd=%lu uplink=%lu gaps=%lu dup=%lu\n",
+        const auto queues=earsLinkQueueStats();
+        appLog().printf("[EARS t=%lu] peer=%d streaming=%d rx=%lu drop=%lu evt_drop=%lu bad=%lu cmd=%lu uplink=%lu gaps=%lu dup=%lu queue=%lu peak=%lu poll_gap_max_ms=%lu\n",
             (unsigned long)millis(),earsLinkPeerOnline(),link.remoteStreaming,
             (unsigned long)link.audioReceived,(unsigned long)link.audioDropped,
             (unsigned long)link.eventDropped,(unsigned long)link.parseRejected,
             (unsigned long)link.commandsSent,(unsigned long)session.forwarded,
-            (unsigned long)session.sequenceGaps,(unsigned long)session.duplicates);
+            (unsigned long)session.sequenceGaps,(unsigned long)session.duplicates,
+            (unsigned long)queues.audio,(unsigned long)queues.audioPeak,(unsigned long)session.pollGapMaxMs);
         break;
         }
         case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
@@ -89,5 +91,8 @@ void loop() {
     Diagnostics::uartPoll();
     audioDownlinkPollDiagnostics();
     uiStatusRefreshStartScreen();
+    // Drain again after UI and diagnostics, before deliberately yielding. The
+    // conversation and UART consumer remain owned by this loop task.
+    uiStatusHandleEarsNotice(earsSessionPoll());
     delay(20);
 }

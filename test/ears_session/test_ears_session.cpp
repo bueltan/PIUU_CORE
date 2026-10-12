@@ -103,6 +103,10 @@ int main() {
     assert(earsSessionPoll()==EarsSessionNotice::ControlLost && conversationState()==ConversationState::Idle);
     earsSessionPoll();assert(incoming.empty() && conversationState()==ConversationState::Idle);
     now+=1000;conversationPoll();assert(conversationState()==ConversationState::Idle);
+#if PIUU_UART_DIAGNOSTICS
+    now+=340;earsSessionPoll();
+    assert(earsSessionStats().pollGapMaxMs>=340);
+#endif
     hostStopWorkers();
     puts("PASS: touch/wake start, ordered PCM/STOP, stale input, sequence gaps/rollover, continuous response stream, offline/rejected wake and overflow");
 }

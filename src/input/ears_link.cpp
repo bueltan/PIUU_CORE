@@ -43,7 +43,7 @@ void uartError(hardwareSerial_error_t error) {
 #endif
 uint32_t localAckErrors=0; // worker-only
 std::atomic<uint32_t> audioReceived{0},audioDropped{0},eventDropped{0},parseRejected{0},commandsSent{0};
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
 std::atomic<uint32_t> audioDepth{0},eventDepth{0},audioPeak{0},eventPeak{0};
 // All queue mutations are serialized by packetMutex, so peaks cannot race.
 void queued(std::atomic<uint32_t>& depth,std::atomic<uint32_t>& peak) {
@@ -76,7 +76,7 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
         }
         ++audioReceived;
         if (xQueueSend(audioQueue,&frame,0)!=pdTRUE) ++audioDropped;
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
         else queued(audioDepth,audioPeak);
 #endif
     } else {
@@ -95,7 +95,7 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
         EarsEvent event{};event.order=serialOrder;event.code=packet.code;event.size=packet.size;
         if (packet.size) memcpy(event.payload,packet.payload,packet.size);
         if (xQueueSend(eventQueue,&event,0)!=pdTRUE) ++eventDropped;
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
         else queued(eventDepth,eventPeak);
 #endif
     }
@@ -196,7 +196,7 @@ bool earsLinkTake(EarsMessage &message) {
     if (haveEvent && (!haveAudio || int32_t(event.order-audio.order)<0)) {
         message.kind=EarsProtocol::Kind::Event;
         const bool ok=xQueueReceive(eventQueue,&message.event,0)==pdTRUE;
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
         if (ok) --eventDepth;
 #endif
         xSemaphoreGive(packetMutex);return ok;
@@ -204,7 +204,7 @@ bool earsLinkTake(EarsMessage &message) {
     if (haveAudio) {
         message.kind=EarsProtocol::Kind::Pcm;
         const bool ok=xQueueReceive(audioQueue,&message.audio,0)==pdTRUE;
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
         if (ok) --audioDepth;
 #endif
         xSemaphoreGive(packetMutex);return ok;
@@ -216,7 +216,7 @@ EarsLinkStats earsLinkStats() {
 }
 
 EarsQueueStats earsLinkQueueStats() {
-#if PIUU_PERFORMANCE_DIAGNOSTICS
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
     return {audioDepth.load(),audioPeak.load(),eventDepth.load(),eventPeak.load()};
 #else
     return {0,0,0,0};

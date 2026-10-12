@@ -42,17 +42,21 @@ int main() {
     waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==7 && m.audio.samples[0]==-2);
     waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Event && m.event.code==42);
     // Saturating audio cannot consume control queue capacity.
-    for(int i=0;i<8;++i) Serial2.inject(pcm(20+i));
-    Serial2.inject(event(3));waitFor([]{return earsLinkStats().audioReceived==9 && earsLinkStats().audioDropped==2;});
-    waitFor([]{return earsLinkReceivedOrder()>=13;});
-    assert(earsLinkQueueStats().audio==6 && earsLinkQueueStats().audioPeak==6);
-    for(int i=0;i<6;++i) { waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==uint32_t(20+i)); }
+    for(size_t i=0;i<EarsConfig::AUDIO_QUEUE_FRAMES+2;++i) Serial2.inject(pcm(20+i));
+    Serial2.inject(event(3));waitFor([]{return earsLinkStats().audioReceived==EarsConfig::AUDIO_QUEUE_FRAMES+3 && earsLinkStats().audioDropped==2;});
+    waitFor([]{return earsLinkReceivedOrder()>=EarsConfig::AUDIO_QUEUE_FRAMES+7;});
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
+    assert(earsLinkQueueStats().audio==EarsConfig::AUDIO_QUEUE_FRAMES && earsLinkQueueStats().audioPeak==EarsConfig::AUDIO_QUEUE_FRAMES);
+#endif
+    for(size_t i=0;i<EarsConfig::AUDIO_QUEUE_FRAMES;++i) { waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==uint32_t(20+i)); }
     waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Event && m.event.code==3);
     for(int i=0;i<10;++i) Serial2.inject(event(42));
     waitFor([]{return earsLinkStats().eventDropped==2;});
     for(int i=0;i<8;++i) { waitFor([&]{return earsLinkTake(m);});assert(m.event.code==42); }
     assert(earsLinkQueueStats().audio==0 && earsLinkQueueStats().events==0);
+#if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
     assert(earsLinkQueueStats().eventPeak==8);
+#endif
     const auto sent=earsLinkStats().commandsSent;now+=500;
     waitFor([&]{return earsLinkStats().commandsSent>sent;}); // Reaffirm desired state, recover lost CMD/peer reboot.
     now+=2501;assert(!earsLinkPeerOnline());
@@ -69,7 +73,9 @@ int main() {
     waitFor([&]{return earsLinkTake(m);});
     assert(m.kind==EarsProtocol::Kind::Pcm && m.audio.sequence==999 && m.audio.samples[319]==-2);
     assert(Serial2.byteReads.load()==0 && Serial2.maxRequested.load()==EarsConfig::RX_READ_CHUNK_BYTES);
+#if PIUU_PERFORMANCE_DIAGNOSTICS
     assert(earsLinkRxStats().blocks>0 && earsLinkRxStats().maxBlock<=EarsConfig::RX_READ_CHUNK_BYTES);
+#endif
     Serial2.readLimit.store(256);
 #if PIUU_UART_DIAGNOSTICS
     const uint32_t missingBefore=earsLinkUartStats().rxMissing;

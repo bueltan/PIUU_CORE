@@ -169,3 +169,17 @@ and RX scheduling effects; they do not identify a network fault by themselves.
 
 For the next comparison upload only CORE, keep EARS/KEYWORD/audio unchanged and
 confirm BOOT reports `perf_diag=0 uart_diag=1 net_diag=1 fifo_threshold=64`.
+
+### PCM consumer scheduling headroom
+
+The EARS PCM queue defaults to 24 frames (480 ms) and can be set at compile time
+with `PIUU_EARS_AUDIO_QUEUE_FRAMES`. Frames are consumed immediately; the queue
+is not a mandatory playback/capture delay. This adds 11664 bytes of queue payload
+versus the previous six frames. The loop services EARS both before UI work and
+again before its 20 ms yield, preserving a single owner for conversation state.
+
+With `PIUU_UART_DIAGNOSTICS=1`, `EARS` includes `queue`, cumulative `peak` and
+`poll_gap_max_ms`. These inexpensive counters remain available with performance
+sampling disabled. They distinguish consumer scheduling stalls from UART FIFO
+or driver overflow. Larger or sustained stalls can still fill this bounded queue;
+measure these values and heap headroom in the next integrated test.
