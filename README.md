@@ -236,8 +236,8 @@ bajo reproducción y conversación; las ventanas no cubren cortes de varios segu
 
 ### Diagnóstico del inicio de salida DAC
 
-`PIUU_DAC_DIAGNOSTICS` está activo por defecto con `PIUU_DIAGNOSTICS`; definirlo
-como `0` elimina el muestreo y los logs. `DAC_WRITE` conserva los primeros cinco
+`PIUU_DAC_DIAGNOSTICS` está desactivado por defecto (`0`). Definirlo como `1`
+activa temporalmente el muestreo y los logs. `DAC_WRITE` conserva los primeros cinco
 frames escritos de cada epoch y escrituras fallidas/incompletas, en una cola fija.
 El loop imprime las muestras; la tarea de reproducción no imprime estos logs.
 `t` es el instante anterior a `i2s_write`; `seq`, `epoch`, `write_us`, `err`,
@@ -246,3 +246,33 @@ con lo aceptado por I2S. Los niveles son valores absolutos PCM16 (0–32768), no
 una detección de voz. `errors`, `incomplete` y `trace_drop` son acumulados.
 Un envío aceptado por I2S no confirma que el DAC lo haya emitido por su salida
 analógica. No se modifica el canal, DMA ni la política de reproducción.
+
+### Recuperación Opus downlink y fin confirmado
+
+Actualizar CORE y backend juntos. HELLO_ACK anuncia la capacidad downlink con
+el bit `0x02`; CORE rechaza un servidor sin esa capacidad (`INCOMPATIBLE_SERVER`).
+El sobre UDP v3 añade `DOWNLINK_NACK=22`, `AUDIO_END=23`, `AUDIO_END_ACK=24`.
+NACK lleva base uint32 + máscara uint16 big endian (ocho bits válidos), ligado
+al cliente, servidor, conversación y respuesta. END conserva el cuerpo Opus END
+con secuencia final exclusiva; su ACK solo se envía tras admitir esa frontera.
+`PLAYED/PLAYED_ACK` sigue confirmando la reproducción y el drenaje estimado de DMA.
+
+CORE conserva el jitter buffer actual. La recuperación usa 128 entradas de
+metadatos (sin copiar audio), espera 40 ms de reordenamiento y genera como máximo
+un NACK de ocho frames cada 20 ms, una vez por secuencia. Durante reproducción
+normal no solicita frames con menos de ocho frames (160 ms) de margen. El
+backend guarda 128 frames Opus por hasta tres segundos, retransmite una vez por
+frame y sirve como máximo dos por ciclo de 20 ms. Si llegan tarde se descartan;
+FEC/PLC continúa sin esperar indefinidamente.
+
+El backend repite END cada 150 ms hasta recibir ACK; tras cinco segundos sin
+confirmación falla explícitamente. CORE da hasta 400 ms al tramo final antes de
+completar huecos con FEC/PLC. Sin END no declara una reproducción completa.
+Cancelación, nueva respuesta y reconexión invalidan solicitudes/ACK antiguos.
+Los límites CORE están en `src/audio/downlink_recovery.h`, los del backend en
+`BridgeConfig`. No se cambian los umbrales de heartbeat.
+
+`DOWNLINK_RECOVERY` muestra solicitudes, frames solicitados y llegadas posteriores
+aceptadas. `recovered` también puede incluir un original retrasado; no garantiza
+que cada llegada corresponda a una retransmisión. Comparar con `OUTPUT_RECOVERY_STATS`,
+`OUTPUT_END_ACK`, `OUTPUT_END_TIMEOUT` y `PLAYBACK_FINISHED` del backend.

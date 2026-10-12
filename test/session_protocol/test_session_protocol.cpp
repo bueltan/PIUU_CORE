@@ -17,7 +17,7 @@ int main(int argc,char **argv) {
     assert(!memcmp(decoded.body,body,3));
     for(size_t n=0;n<41;++n) assert(!decode(bytes,n,decoded));
     bytes[4]=1;assert(!decode(bytes,41,decoded));bytes[4]=3;
-    bytes[5]=22;assert(!decode(bytes,41,decoded));bytes[5]=9;
+    bytes[5]=25;assert(!decode(bytes,41,decoded));bytes[5]=9;
     bytes[37]=2;assert(!decode(bytes,41,decoded));bytes[37]=3;
     auto other=p.id;++other.turn;assert(sameSession(p.id,other) && !sameTurn(p.id,other));
     ++other.server;assert(!sameSession(p.id,other));

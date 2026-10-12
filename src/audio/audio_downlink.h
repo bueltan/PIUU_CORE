@@ -21,3 +21,6 @@ bool audioDownlinkBufferStats(AudioBufferStats &stats);
 
 // Reset has reached the playback worker; safe to acknowledge a new response.
 bool audioDownlinkEpochReady();
+
+// Controller polls recovery; no network send or logging in playback worker.
+void audioDownlinkPollRecovery();

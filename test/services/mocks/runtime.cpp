@@ -42,3 +42,5 @@ int xQueuePeek(QueueHandle_t q,void *data,TickType_t) {
     if(q->items.empty()) return pdFALSE;
     memcpy(data,q->items.front().data(),q->itemSize);return pdTRUE;
 }
+
+void audioDownlinkPollRecovery() {}

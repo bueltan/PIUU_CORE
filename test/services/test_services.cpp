@@ -54,7 +54,7 @@ static void pong() {
         if(decode(it->data(),it->size(),hello) && hello.kind==Kind::Hello) break;
     }
     uint8_t wire[MAX_PACKET];hello.id.server=42;
-    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,1,hello.id,hello.sequence,nullptr,0});
+    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,3,hello.id,hello.sequence,nullptr,0});
     incoming.assign(wire,wire+n);
     uint8_t data[MAX_PACKET];assert(serverLinkParsePacket()==int(n));assert(serverLinkRead(data,sizeof(data))==0);
 }

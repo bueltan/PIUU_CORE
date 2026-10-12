@@ -16,6 +16,7 @@ static Diagnostics::DacTrace dacTrace;
 #include "diagnostics/metrics.h"
 #include "diagnostics/downlink_trace.h"
 #include "audio/playback_completion.h"
+#include "audio/downlink_recovery.h"
 
 #include <Arduino.h>
 
@@ -71,6 +72,9 @@ static bool resumeLogArmed = true;
 static uint32_t expectedSeq = 0;
 static uint32_t highestSeqSeen = 0;
 static uint32_t endSeq = 0;
+static uint32_t endReceivedMs=0;
+static DownlinkRecovery recovery;
+static uint32_t recoveryEpoch=0;
 static uint32_t consecutiveMisses = 0;
 static uint32_t lastPacketMillis = 0;
 
@@ -242,6 +246,7 @@ static void resetStreamState()
         expectedSeq = 0;
         highestSeqSeen = 0;
         endSeq = 0;
+        endReceivedMs=0;
         consecutiveMisses = 0;
         lastPacketMillis = 0;
 
@@ -344,11 +349,11 @@ static bool insertPacketLocked(uint32_t seq,
         {
             duplicatePackets++;
         }
-        else if (playbackStarted && !rebuffering && seq < expectedSeq)
+        else if (playbackStarted && seq < expectedSeq)
         {
             latePackets++;
         }
-        else if (playbackStarted && !rebuffering && seq > expectedSeq + MAX_AHEAD_WINDOW)
+        else if (seq > expectedSeq + MAX_AHEAD_WINDOW)
         {
             aheadDrops++;
             droppedPackets++;
@@ -378,6 +383,7 @@ static bool insertPacketLocked(uint32_t seq,
             if (receivedPackets == 0 || seq > highestSeqSeen)
                 highestSeqSeen = seq;
 
+            if(recoveryEpoch==packetEpoch) recovery.arrived(seq);
             receivedPackets++;
             lastPacketMillis = millis();
             inserted = true;
@@ -393,16 +399,40 @@ static bool insertPacketLocked(uint32_t seq,
  * @brief Records the final stream sequence under the mutex. Playback can finish once pending
  * audio through that boundary has been consumed.
  */
-static void markEndPacket(uint32_t seq, uint32_t packetEpoch)
+static bool markEndPacket(uint32_t seq, uint32_t packetEpoch)
 {
-    if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
-    {
-        if (expectResponse.load() && packetEpoch == requestedEpoch.load() && processedEpoch.load() == packetEpoch) {
-            endSeen = true;
-            endSeq = seq;
+    bool accepted=false;
+    if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE) {
+        if (expectResponse.load() && packetEpoch==requestedEpoch.load() && processedEpoch.load()==packetEpoch &&
+            seq>=expectedSeq && seq-expectedSeq<=JITTER_SLOTS && (!endSeen || seq==endSeq)) {
+            if(!endSeen) endReceivedMs=millis();
+            endSeen=true;endSeq=seq;accepted=true;
         }
         xSemaphoreGive(jitterMutex);
     }
+    return accepted;
+}
+
+void audioDownlinkPollRecovery() {
+    if(!jitterMutex || !expectResponse.load()) return;
+    DownlinkRecovery::Request request{};bool send=false;
+    if(xSemaphoreTake(jitterMutex,0)==pdTRUE) {
+        const uint32_t epoch=requestedEpoch.load();
+        if(epoch==processedEpoch.load()) {
+            if(recoveryEpoch!=epoch) { recovery.reset();recoveryEpoch=epoch; }
+            const uint32_t limit=endSeen?endSeq:(receivedPackets.load()?highestSeqSeen+1:0);
+            uint32_t occupied[4]{};
+            for(const auto &slot:jitter) if(slot.used && slot.seq>=expectedSeq) {
+                const uint32_t offset=slot.seq-expectedSeq;
+                if(offset<DownlinkRecovery::WINDOW) occupied[offset/32]|=uint32_t(1)<<(offset%32);
+            }
+            const uint32_t base=expectedSeq;
+            send=recovery.poll(millis(),base,limit,playbackStarted && !rebuffering,
+                [&](uint32_t seq) { const uint32_t offset=seq-base;return bool(occupied[offset/32]&(uint32_t(1)<<(offset%32))); },request);
+        }
+        xSemaphoreGive(jitterMutex);
+    }
+    if(send) serverLinkRequestDownlink(request.base,request.mask);
 }
 
 // ============================================================
@@ -522,7 +552,8 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len, uint32_t packetE
     // Valid transport traffic proves reachability even if jitter rejects its position.
     serverLinkObserveMedia();
     if (packet.end) {
-        markEndPacket(packet.sequence, packetEpoch);
+        if(!markEndPacket(packet.sequence, packetEpoch)) return false;
+        serverLinkAcknowledgeEnd(packet.sequence);
         appLog().printf("[UDP] END packet seq=%lu\n", (unsigned long)packet.sequence);
         return true;
     }
@@ -627,7 +658,7 @@ static void playbackTask(void *parameter)
             continue;
         }
         bool started, rebuf, seenEnd;
-        uint32_t expSeq, hiSeq, eSeq, lastPktMs, consecMiss;
+        uint32_t expSeq, hiSeq, eSeq, lastPktMs, consecMiss, endAt;
         int buffered = 0;
         uint32_t minSeq = 0;
         bool foundMin = false;
@@ -640,7 +671,7 @@ static void playbackTask(void *parameter)
             seenEnd = endSeen;
             expSeq = expectedSeq;
             hiSeq = highestSeqSeen;
-            eSeq = endSeq;
+            eSeq = endSeq;endAt=endReceivedMs;
             lastPktMs = lastPacketMillis;
             consecMiss = consecutiveMisses;
             buffered = countBufferedPacketsNoLock();
@@ -680,8 +711,11 @@ static void playbackTask(void *parameter)
             bool canResume = false;
             int needed = started ? REBUFFER_PACKETS : START_BUFFERED_PACKETS;
 
-            if (seenEnd)
-                canResume = (buffered > 0 && foundMin);
+            if (seenEnd) {
+                // END proves the boundary, not the arrival of every last frame.
+                // Give trailing recovery a bounded grace; then conceal through END.
+                canResume = playbackCanDrainEnd(expSeq,eSeq,foundMin,minSeq,nowMs,endAt,DownlinkRecovery::END_GRACE_MS);
+            }
             else
                 canResume = (buffered >= needed && foundMin);
 
@@ -692,7 +726,7 @@ static void playbackTask(void *parameter)
 #if PIUU_NETWORK_DIAGNOSTICS
                     downlinkTrace.resume(expectedSeq,minSeq,nowMs,!playbackStarted);
 #endif
-                    expectedSeq = minSeq;
+                    if(!seenEnd) expectedSeq = minSeq;
                     playbackStarted = true;
                     rebuffering = false;
 #if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_NETWORK_DIAGNOSTICS
@@ -719,11 +753,12 @@ static void playbackTask(void *parameter)
 
         if (!popExpectedPacketLocked(playbackPkt))
         {
-            bool bufferIsActuallyLow = (buffered <= LOW_WATER_PACKETS);
-            bool tooManyMissesWithLowBuffer = ((consecMiss + 1) >= MAX_CONSECUTIVE_MISSES) &&
+            const bool drainingEnd=seenEnd && expSeq<eSeq;
+            bool bufferIsActuallyLow = !drainingEnd && (buffered <= LOW_WATER_PACKETS);
+            bool tooManyMissesWithLowBuffer = !drainingEnd && ((consecMiss + 1) >= MAX_CONSECUTIVE_MISSES) &&
                                               (buffered <= (REBUFFER_PACKETS / 2));
             bool seqGapTooLarge = (hiSeq > expSeq) && ((hiSeq - expSeq) > HARD_REBUFFER_GAP);
-            bool shouldHardRebuffer = seqGapTooLarge && ((consecMiss + 1) >= HARD_REBUFFER_MISSES);
+            bool shouldHardRebuffer = !drainingEnd && seqGapTooLarge && ((consecMiss + 1) >= HARD_REBUFFER_MISSES);
 
             if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
             {
@@ -863,7 +898,11 @@ void audioDownlinkLogDiagnostics() {
     const int buffered=countBufferedPacketsNoLock();
     const uint32_t seq=expectedSeq;
     const bool ended=endSeen,rebuf=rebuffering;
+    const uint32_t nackRequests=recovery.requests,nackFrames=recovery.frames,recovered=recovery.recovered;
     xSemaphoreGive(jitterMutex);
+    appLog().printf("[DOWNLINK_RECOVERY t=%lu] epoch=%lu nack_requests=%lu nack_frames=%lu recovered=%lu\n",
+        (unsigned long)millis(),(unsigned long)recoveryEpoch,(unsigned long)nackRequests,
+        (unsigned long)nackFrames,(unsigned long)recovered);
     appLog().printf("[AUDIO t=%lu] epoch=%lu rx=%lu dec=%lu miss=%lu fec=%lu plc=%lu drop=%lu dup=%lu late=%lu ahead=%lu bad=%lu dec_err=%lu hard_rebuf=%lu buffered=%d seq=%lu end=%d rebuf=%d played_est_ms=%lu\n",
         (unsigned long)millis(),(unsigned long)processedEpoch.load(),
         (unsigned long)receivedPackets.load(),(unsigned long)decodedPackets.load(),

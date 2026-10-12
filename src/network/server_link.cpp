@@ -2,6 +2,8 @@
 #include "hardware/app_log.h"
 #include "network/network_udp.h"
 #include "network/session_client.h"
+#include "protocol/server_protocol.h"
+#include "audio/audio_downlink.h"
 #include "app/conversation_event.h"
 #include "config/app_config.h"
 #include "config/settings.h"
@@ -86,6 +88,7 @@ bool serverLinkPollHeartbeat(bool online) {
         if(event.kind==Kind::Opus) client.observeMedia(event.id,event.sequence);
         else client.receive({event.kind,event.flags,event.id,event.sequence,event.body,event.size},millis());
     client.poll(millis(),online && initialized);publish();
+    if(online && initialized) audioDownlinkPollRecovery();
     return online && initialized && client.ready(millis());
 }
 bool serverLinkOpenConversation() { const bool ok=client.beginConversation();publish();return ok; }
@@ -105,8 +108,11 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
     if(size<=0) return 0;
     if(!decode(packet,size,view)) { ++invalidRx;return 0; }
     if(!snapshot(expected) || view.id.client!=expected.client) { ++staleRx;return 0; }
-    if(view.kind==Kind::Opus) {
+    if(view.kind==Kind::Opus || view.kind==Kind::AudioEnd) {
         if(view.flags || !expected.turn || !sameTurn(view.id,expected) || view.id.response!=expected.response || view.size>capacity) { ++staleRx;return 0; }
+        ServerProtocol::OpusPacket inner{};
+        if(!ServerProtocol::decodeOpus(view.body,view.size,inner) || inner.sequence!=view.sequence ||
+           (view.kind==Kind::AudioEnd && !inner.end) || (view.kind==Kind::Opus && inner.end)) { ++invalidRx;return 0; }
         receivedMedia=view.id;memcpy(data,view.body,view.size);return view.size;
     }
     if(view.kind!=Kind::HelloAck && !sameSession(view.id,expected)) { ++staleRx;return 0; }
@@ -140,4 +146,11 @@ void serverLinkLogDiagnostics() {
         (unsigned long)s.retransmitFailed,(unsigned long)s.retries,(unsigned long)s.overwritten,
         (unsigned long)invalidRx.load(),(unsigned long)staleRx.load(),(unsigned long)controlDrops.load());
 #endif
+}
+
+bool serverLinkRequestDownlink(uint32_t base,uint16_t mask) { return client.requestDownlink(base,mask); }
+void serverLinkAcknowledgeEnd(uint32_t sequence) {
+    OwnedControl marker{Kind::AudioEndAck,0,receivedMedia,sequence,0,{}};
+    // A dropped ACK is repaired by the server END retry, never a control-overflow abort.
+    if(!controls || xQueueSend(controls,&marker,0)!=pdTRUE) ++controlDrops;
 }

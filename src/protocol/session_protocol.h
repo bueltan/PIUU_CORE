@@ -9,7 +9,7 @@ constexpr size_t HEADER_SIZE=38, MAX_BODY=658, MAX_PACKET=HEADER_SIZE+MAX_BODY;
 constexpr uint8_t VERSION=3;
 enum class Kind : uint8_t {
     Hello=1, HelloAck, Start, StartAck, Commit, CommitAck, Cancel, CancelAck,
-    Pcm, Opus, Nack, Missing, Error, Ping, Pong, Event, EventAck, Interrupt, InterruptAck, Played, PlayedAck
+    Pcm, Opus, Nack, Missing, Error, Ping, Pong, Event, EventAck, Interrupt, InterruptAck, Played, PlayedAck, DownlinkNack, AudioEnd, AudioEndAck
 };
 enum class Event : uint8_t { SpeechStarted=1, SpeechStopped, ResponseStarted, Closed, Ready };
 // turn is the conversation ID; response=0 identifies its continuous uplink.

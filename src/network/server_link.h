@@ -21,3 +21,8 @@ void serverLinkLogDiagnostics();
 
 void serverLinkPlaybackFinished(uint32_t playedMs);
 bool serverLinkInterrupt(uint32_t playedMs);
+
+// RX-only: acknowledge a validated END after admission to playback state.
+void serverLinkAcknowledgeEnd(uint32_t sequence);
+// Controller-only: bounded downlink recovery requests.
+bool serverLinkRequestDownlink(uint32_t base,uint16_t mask);

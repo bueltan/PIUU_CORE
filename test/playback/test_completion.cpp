@@ -17,5 +17,11 @@ int main() {
     assert(playbackCompletion(false,0,0,0,true,10000,0,timeout)==PlaybackCompletion::Stalled);
     assert(playbackCompletion(false,0,0,0,false,10000,0,timeout)==PlaybackCompletion::Pending);
     assert(playbackCompletion(false,343,0,0,true,50,UINT32_MAX-100,timeout)==PlaybackCompletion::Pending);
+    assert(!playbackCanDrainEnd(10,12,false,0,399,0,400));
+    assert(playbackCanDrainEnd(10,12,false,0,400,0,400)); // lost final frames conceal after grace
+    assert(playbackCanDrainEnd(10,12,true,10,100,0,400)); // next frame can drain now
+    assert(!playbackCanDrainEnd(10,12,true,11,100,0,400)); // don't skip the missing head
+    assert(!playbackCanDrainEnd(12,12,false,0,500,0,400)); // empty/completed END
+    assert(playbackCanDrainEnd(10,12,false,0,300,UINT32_MAX-100,400));
     puts("PASS: END completion, short gaps, missing END/first audio failure and rollover");
 }

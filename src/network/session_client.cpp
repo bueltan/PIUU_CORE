@@ -56,6 +56,11 @@ bool SessionClient::interrupt(uint32_t playedMs) {
     uint8_t body[4];put32(body,playedMs);
     return queue(Kind::Interrupt,body,4);
 }
+bool SessionClient::requestDownlink(uint32_t base,uint16_t mask) {
+    if(!id.turn || !id.response || !mask || (mask&0xff00)) return false;
+    uint8_t body[6];put32(body,base);body[4]=uint8_t(mask>>8);body[5]=uint8_t(mask);
+    return emit(Kind::DownlinkNack,id,base,body,6);
+}
 void SessionClient::playbackFinished(uint32_t playedMs) {
     if(!id.turn || !id.response) return;
     uint8_t body[4];put32(body,playedMs);queue(Kind::Played,body,4);
@@ -83,7 +88,8 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~1u)) {
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~3u)) {
+        if(!(packet.flags&2)) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
         if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
@@ -97,6 +103,12 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
         available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("PONG_READY",available);
         return;
+    }
+    // RX queues this only after jitter accepted the authoritative END boundary.
+    if(packet.kind==Kind::AudioEndAck && sameTurn(packet.id,id) && id.response &&
+       packet.id.response==id.response && !packet.flags && !packet.size) {
+        lastReceive=now;emit(Kind::AudioEndAck,packet.id,packet.sequence,nullptr,0);
+        report("OUTPUT_END_ACK",packet.sequence);return;
     }
     if(packet.kind==Kind::Error) {
         if(!packet.id.turn || sameTurn(packet.id,id)) { report("REMOTE_ERROR",packet.sequence);reset();failed=true; }

@@ -10,6 +10,7 @@ public:
     void setEventReady(bool (*ready)()) { eventReady=ready; }
     bool interrupt(uint32_t playedMs);
     void playbackFinished(uint32_t playedMs);
+    bool requestDownlink(uint32_t base,uint16_t mask);
     using Sender=bool(*)(const uint8_t*,size_t);
     using Observer=void(*)(const char*,SessionProtocol::Identity,uint32_t,uint32_t);
     struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0,retransmitFailed=0,cacheExpired=0,nackAgeMaxMs=0; };

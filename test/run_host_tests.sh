@@ -4,6 +4,9 @@ cd "$(dirname "$0")/.."
 task_test_dir=$(mktemp -d /tmp/piuu-host-tests.XXXXXX)
 trap 'rm -rf "$task_test_dir"' EXIT
 
+g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_recovery.cpp -o "$task_test_dir/downlink_recovery"
+"$task_test_dir/downlink_recovery"
+
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_dac_trace.cpp -o "$task_test_dir/dac_trace"
 "$task_test_dir/dac_trace"
 
@@ -59,6 +62,10 @@ if [[ $# -gt 0 ]]; then
     backend_main="$1"
     if [[ -d "$backend_main" ]]; then backend_main="$backend_main/src/main.py"; fi
     backend_root="$(dirname "$(dirname "$backend_main")")"
+    g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_wire.cpp src/protocol/session_protocol.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/downlink_wire"
+    "$task_test_dir/downlink_wire" write "$task_test_dir/downlink-nack.bin"
+    python3 test/downlink_recovery/check_backend.py "$backend_root/src" "$task_test_dir/downlink-nack.bin" "$task_test_dir/downlink-end.bin"
+    "$task_test_dir/downlink_wire" read "$task_test_dir/downlink-end.bin"
     python3 test/session_protocol/check_python_recovery.py "$task_test_dir/session_client" "$backend_root/src"
     python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/conversation_protocol.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     "$task_test_dir/session_protocol" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"

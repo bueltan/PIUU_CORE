@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12
+
+- Disable DAC diagnostics by default.
+- Add bounded Opus downlink NACK requests and acknowledged audio END boundaries.
+- Drain missing tail frames with bounded recovery/concealment; reject stale retries.
+- Require downlink capability at handshake and expose recovery counters.
+
 ## 2026-10-11
 
 - Add optional bounded DAC onset PCM/write diagnostics without playback-task logging.

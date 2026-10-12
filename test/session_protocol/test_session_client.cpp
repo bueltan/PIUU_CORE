@@ -19,7 +19,7 @@ static void startupTrace(const char *event,Identity,uint32_t a,uint32_t b) {
 static Packet last() {Packet p{};assert(decode(sent.back().data(),sent.back().size(),p));return p;}
 static Packet find(Kind k) {for(auto i=sent.rbegin();i!=sent.rend();++i){Packet p{};decode(i->data(),i->size(),p);if(p.kind==k)return p;}assert(false);return {};}
 static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;p.body=nullptr;p.size=0;c.receive(p,now);}
-static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=1;c.receive(p,now);assert(c.ready(now));}
+static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=3;c.receive(p,now);assert(c.ready(now));}
 static uint32_t calls=0;
 static bool responseReady=false;
 static bool eventReady() { return responseReady; }
@@ -86,7 +86,7 @@ int main(int argc,char **argv){
  d.cancel(0);d.poll(9,true);ack(d,Kind::Cancel,Kind::CancelAck,10);assert(d.beginConversation());
  d.poll(11,true);for(int i=1;i<=SessionClient::CONTROL_ATTEMPTS;++i)d.poll(11+150*i,true);assert(d.takeFailure());
  auto retired=d.identity().client;d.reset();assert(d.identity().client!=retired);handshake(d,1500);
- auto previous=d.identity();d.poll(4500,true);auto hello=find(Kind::Hello);hello.kind=Kind::HelloAck;hello.flags=1;hello.id.server=99;
+ auto previous=d.identity();d.poll(4500,true);auto hello=find(Kind::Hello);hello.kind=Kind::HelloAck;hello.flags=3;hello.id.server=99;
  d.receive(hello,4500);assert(d.takeFailure()&&d.identity().client!=previous.client&&!d.ready(4500));
  SessionClient e;e.init(88,send);handshake(e,0);e.setEventHandler(handleEvent);e.setEventReady(eventReady);
  assert(e.beginConversation());e.poll(1,true);ack(e,Kind::Start,Kind::StartAck,2);
@@ -95,6 +95,12 @@ int main(int argc,char **argv){
  e.receive({Kind::Event,0,rid,1,responseEvent,5},4);assert(calls==1 && sent.size()==frames);
  responseReady=true;e.poll(5,true);assert(last().kind==Kind::EventAck && last().body[3]==123);
  e.receive({Kind::Event,0,rid,1,responseEvent,5},6);assert(calls==1 && last().body[3]==123);
+ assert(e.requestDownlink(10,3));assert(last().kind==Kind::DownlinkNack && last().id.response==7 && last().sequence==10 && last().body[5]==3);
+ assert(!e.requestDownlink(10,0) && !e.requestDownlink(10,256));
+ e.receive({Kind::AudioEndAck,0,rid,50,nullptr,0},6);
+ assert(last().kind==Kind::AudioEndAck && last().sequence==50);
+ auto wrongEnd=rid;wrongEnd.response=6;const size_t beforeWrongEnd=sent.size();
+ e.receive({Kind::AudioEndAck,0,wrongEnd,50,nullptr,0},6);assert(sent.size()==beforeWrongEnd);
  uint8_t speechEvent[5]={1,0,0,0,2};e.receive({Kind::Event,0,rid,3,speechEvent,5},7);assert(calls==1);
  e.receive({Kind::Event,0,rid,2,speechEvent,5},8);assert(calls==2 && e.identity().response==0);
  // A recent matching ACK keeps the link alive despite missing PONGs.
@@ -125,9 +131,12 @@ int main(int argc,char **argv){
  startup.poll(100,false);assert(helloLogs==0);
  startup.poll(100,true);assert(helloLogs==1 && helloLocalOk==0);
  startupSendOk=true;startup.poll(600,true);assert(helloLogs==2 && helloLocalOk==1);
- auto reply=find(Kind::Hello);reply.kind=Kind::HelloAck;reply.id.server=2;reply.flags=1;
+ auto reply=find(Kind::Hello);reply.kind=Kind::HelloAck;reply.id.server=2;reply.flags=3;
  startup.receive(reply,650);assert(connectedLogs==1 && helloElapsed==550 && helloAttempts==2);
  startup.poll(3600,true);assert(helloLogs==2); // Healthy HELLO keepalives are silent.
  startup.receive(find(Kind::Hello),3601);assert(connectedLogs==1);
+ SessionClient oldServer;oldServer.init(110,send);oldServer.poll(0,true);
+ auto oldReply=find(Kind::Hello);oldReply.kind=Kind::HelloAck;oldReply.id.server=2;oldReply.flags=1;
+ oldServer.receive(oldReply,1);assert(oldServer.takeFailure() && !oldServer.ready(1));
  puts("PASS: v3 ACK retry, continuous PCM, response events/duplicate ACK, playback ACK, NACK once/cache miss, cancellation IDs, normal reuse, timeouts and HELLO diagnostics");
 }
