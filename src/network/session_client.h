@@ -1,5 +1,7 @@
 #pragma once
 #include "protocol/session_protocol.h"
+#include <array>
+#include <memory>
 // Controller-owned transport state; the RX worker hands controls through a queue.
 class SessionClient {
 public:
@@ -10,10 +12,10 @@ public:
     void playbackFinished(uint32_t playedMs);
     using Sender=bool(*)(const uint8_t*,size_t);
     using Observer=void(*)(const char*,SessionProtocol::Identity,uint32_t,uint32_t);
-    struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0; };
+    struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0,retransmitFailed=0,cacheExpired=0,nackAgeMaxMs=0; };
     void setObserver(Observer value) { observer=value; }
     Stats stats() const { return counters; }
-    void init(uint64_t client,Sender sender);
+    bool init(uint64_t client,Sender sender);
     void reset();
     bool ready(uint32_t now) const;
     bool reachable(uint32_t now) const;
@@ -27,9 +29,9 @@ public:
     void poll(uint32_t now,bool online);
     bool takeFailure() { bool v=failed;failed=false;return v; }
     SessionProtocol::Identity identity() const { return id; }
-    // Tune together with backend recovery window; static allocation, no audio malloc.
-    static constexpr size_t CACHE_FRAMES=12;
-    static constexpr uint32_t CACHE_TTL_MS=240;
+    // Tune with backend recovery window; one startup allocation, no streaming malloc.
+    static constexpr size_t CACHE_FRAMES=32;
+    static constexpr uint32_t CACHE_TTL_MS=640;
     static constexpr uint32_t CONTROL_RETRY_MS=150;
     static constexpr uint8_t CONTROL_ATTEMPTS=48;
     static constexpr size_t RECOVERY_BUDGET=2;
@@ -51,7 +53,8 @@ private:
     }
     void report(const char *event,uint32_t a=0,uint32_t b=0) { reportFor(event,id,a,b); }
     Command commands[4]{};size_t count=0;
-    Frame cache[CACHE_FRAMES]{};size_t cursor=0;
+    using FramePool=std::array<Frame,CACHE_FRAMES>;
+    std::unique_ptr<FramePool> cache;size_t cursor=0;
     uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,lastReceive=0,helloRequest=0;
     uint32_t helloStarted=0,helloAttempts=0;
     bool helloSent=false,pingSent=false,established=false,available=false,started=false,failed=false;

@@ -2,6 +2,10 @@
 
 ## 2026-10-11
 
+- Reserve the recovery pool once at startup and prioritize requested frames.
+- Extend bounded uplink NACK recovery and expose successful retries, expiry and recovery counters.
+- Add delayed recovery, saturation and cross-language regression coverage.
+
 - Add optional UDP RX scheduling and processing timing probes for downlink loss investigation.
 
 - Add configurable 480 ms EARS PCM queue headroom and drain again after UI work.

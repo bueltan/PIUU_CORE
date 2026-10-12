@@ -56,6 +56,7 @@ if [[ $# -gt 0 ]]; then
     backend_main="$1"
     if [[ -d "$backend_main" ]]; then backend_main="$backend_main/src/main.py"; fi
     backend_root="$(dirname "$(dirname "$backend_main")")"
+    python3 test/session_protocol/check_python_recovery.py "$task_test_dir/session_client" "$backend_root/src"
     python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/conversation_protocol.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     "$task_test_dir/session_protocol" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     python3 test/protocol/check_python_bridge.py "$backend_main" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"

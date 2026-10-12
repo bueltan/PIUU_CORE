@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <fstream>
+#include <iterator>
 using namespace SessionProtocol;
 static std::vector<std::vector<uint8_t>> sent;
 static bool send(const uint8_t*p,size_t n) {sent.emplace_back(p,p+n);return true;}
@@ -23,8 +25,48 @@ static bool responseReady=false;
 static bool eventReady() { return responseReady; }
 static uint32_t handleEvent(SessionProtocol::Event,uint32_t,uint32_t) { ++calls;return 123; }
 static void put32(uint8_t*p,uint32_t n) {for(int i=3;i>=0;--i){p[i]=n;n>>=8;}}
-static void pcm(SessionClient&c,uint32_t seq,uint32_t now) {uint8_t b[658]={};memcpy(b,"PCM!",4);b[4]=1;put32(b+6,seq);put32(b+10,seq*320);assert(c.sendBody(b,sizeof b,now));}
-int main(){
+static void pcm(SessionClient&c,uint32_t seq,uint32_t now) {uint8_t b[658]={};memcpy(b,"PCM!",4);b[4]=1;put32(b+6,seq);put32(b+10,seq*320);b[14]=1;b[15]=64;b[16]=2;b[17]=128;assert(c.sendBody(b,sizeof b,now));}
+int main(int argc,char **argv){
+ if(argc==2) {
+  // Real CORE cache, with 300 ms simulated NACK age; stdout is a v3 PCM datagram.
+  SessionClient recovery;recovery.init(40,send);handshake(recovery,0);
+  assert(recovery.beginConversation());recovery.poll(1,true);ack(recovery,Kind::Start,Kind::StartAck,2);
+  for(uint32_t i=0;i<16;++i) pcm(recovery,i,i*20);
+  std::ifstream file(argv[1],std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+  Packet request{};assert(decode(bytes.data(),bytes.size(),request));
+  recovery.receive(request,300);recovery.poll(300,true);
+  assert(recovery.stats().retransmits==1 && last().sequence==0);
+  fwrite(sent.back().data(),1,sent.back().size(),stdout);return 0;
+ }
+ // A requested live frame goes ahead of unsent startup frames, within the budget.
+ {
+  SessionClient r;r.init(31,send);handshake(r,0);assert(r.beginConversation());
+  for(uint32_t i=0;i<8;++i) pcm(r,i,i*20);
+  r.poll(160,true);ack(r,Kind::Start,Kind::StartAck,161);pcm(r,8,162);
+  uint8_t request[6]={0,0,0,8,0,1};Packet p{Kind::Nack,0,r.identity(),0,request,6};
+  const size_t before=sent.size();r.receive(p,180);r.poll(180,true);
+  Packet first{};assert(decode(sent[before].data(),sent[before].size(),first));
+  assert(first.kind==Kind::Pcm && first.sequence==8);
+  assert(sent.size()==before+SessionClient::RECOVERY_BUDGET && r.stats().retransmits==1);
+ }
+ // Retention, capture-age expiry, invalid masks and failed retry accounting.
+ {
+  SessionClient r;r.init(30,startupSend);startupSendOk=true;handshake(r,0);
+  assert(r.beginConversation());r.poll(1,true);ack(r,Kind::Start,Kind::StartAck,2);
+  for(uint32_t i=0;i<16;++i) pcm(r,i,20*i);
+  uint8_t request[6]={0,0,0,0,0,1};Packet p{Kind::Nack,0,r.identity(),0,request,6};
+  r.receive(p,300);r.poll(300,true);assert(r.stats().retransmits==1 && last().sequence==0);
+  r.receive(p,301);r.poll(301,true);assert(r.stats().retransmits==1);
+  put32(request,1);startupSendOk=false;r.receive(p,320);r.poll(320,true);
+  assert(r.stats().retransmits==1 && r.stats().retransmitFailed==1);
+  r.receive(p,321);r.poll(321,true);assert(r.stats().retransmitFailed==1);
+  startupSendOk=true;put32(request,2);r.receive(p,700);
+  assert(r.stats().cacheExpired==1 && r.stats().cacheMisses==1 && last().kind==Kind::Missing);
+  auto count=r.stats().nacks;request[4]=1;r.receive(p,701);assert(r.stats().nacks==count);
+  assert(r.stats().nackAgeMaxMs==660);startupSendOk=false;
+ }
+
  SessionClient c;c.init(1,send);handshake(c,0);assert(c.beginConversation());auto first=c.identity();pcm(c,0,1);c.poll(1,true);assert(find(Kind::Start).id.turn==first.turn);
  auto start=find(Kind::Start);c.poll(151,true);assert(find(Kind::Start).sequence==start.sequence);ack(c,Kind::Start,Kind::StartAck,152);c.poll(152,true);assert(last().kind==Kind::Pcm);
  uint8_t body[6]={0,0,0,0,0,1};Packet nack{Kind::Nack,0,c.identity(),0,body,6};size_t n=sent.size();c.receive(nack,153);c.poll(153,true);assert(sent.size()==n+1&&last().kind==Kind::Pcm);n=sent.size();c.receive(nack,154);c.poll(154,true);assert(sent.size()==n);

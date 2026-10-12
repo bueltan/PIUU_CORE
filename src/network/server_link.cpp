@@ -71,7 +71,9 @@ bool serverLinkInit() {
     if(!controls || !networkUdpInit(LOCAL_UDP_PORT)) return false;
     if(!configured) {
         uint64_t nonce=uint64_t(esp_random())<<32|esp_random();
-        client.init(nonce?nonce:1,raw);client.setObserver(trace);client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
+        client.setObserver(trace);
+        if(!client.init(nonce?nonce:1,raw)) return false;
+        client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;
 }
@@ -131,10 +133,11 @@ void serverLinkLogDiagnostics() {
     appLog().printf("[LINK_STATS t=%lu] reachable=%d admission=%d rx_age_ms=%lu pong_age_ms=%lu\n",
         (unsigned long)millis(),serverLinkReachable(),client.ready(millis()),
         (unsigned long)client.receiveAge(millis()),(unsigned long)client.pongAge(millis()));
-    appLog().printf("[V3_STATS t=%lu] turn=%lu pcm_tx=%lu tx_fail=%lu nack=%lu retx=%lu cache_miss=%lu retry=%lu startup_drop=%lu bad_rx=%lu stale_rx=%lu ctrl_drop=%lu\n",
+    appLog().printf("[V3_STATS t=%lu] turn=%lu pcm_tx=%lu tx_fail=%lu nack=%lu retx=%lu cache_miss=%lu cache_expired=%lu nack_age_max_ms=%lu retx_fail=%lu retry=%lu startup_drop=%lu bad_rx=%lu stale_rx=%lu ctrl_drop=%lu\n",
         (unsigned long)millis(),(unsigned long)client.identity().turn,(unsigned long)s.pcmSent,
         (unsigned long)s.txFailed,(unsigned long)s.nacks,(unsigned long)s.retransmits,
-        (unsigned long)s.cacheMisses,(unsigned long)s.retries,(unsigned long)s.overwritten,
+        (unsigned long)s.cacheMisses,(unsigned long)s.cacheExpired,(unsigned long)s.nackAgeMaxMs,
+        (unsigned long)s.retransmitFailed,(unsigned long)s.retries,(unsigned long)s.overwritten,
         (unsigned long)invalidRx.load(),(unsigned long)staleRx.load(),(unsigned long)controlDrops.load());
 #endif
 }

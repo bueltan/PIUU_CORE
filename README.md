@@ -217,3 +217,19 @@ sequence numbers at server egress with those observed by CORE. VPS capture canno
 prove delivery to the ESP32; isolating radio loss from socket loss may require an
 AP/router-side capture. This investigation does not change retransmission,
 transport choice, task affinity, priorities or audio buffer sizes.
+
+### Recuperación PCM uplink
+
+CORE conserva 32 frames / 640 ms desde la captura en `SessionClient`, en un pool
+reservado una sola vez al iniciar, sin asignaciones durante streaming (unos
+13,1 KiB adicionales respecto de 12 frames). El backend espera hasta 400 ms por
+NACK, con un intento de retransmisión por frame. PCM contiguo no agrega espera.
+Actualizar CORE y backend para evaluar estos límites juntos; EARS y KEYWORD no
+requieren cambios. El transporte sigue usando UDP v3 y el downlink no cambia.
+
+`V3_STATS` diferencia `retx` exitosos, `retx_fail`, `cache_miss`, `cache_expired`
+(subconjunto de misses) y `nack_age_max_ms` para frames encontrados en caché.
+Comparar sus deltas con `INPUT_STATS.nack_recovered`, `missing` y `silence_frames`
+del backend. Un frame solicitado que llega puede ser también un original tardío.
+La instrumentación existente permite desactivar estos logs. Validar heap mínimo
+bajo reproducción y conversación; las ventanas no cubren cortes de varios segundos.
