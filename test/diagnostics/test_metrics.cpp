@@ -1,9 +1,20 @@
 #include "diagnostics/metrics.h"
+#include "diagnostics/rx_service.h"
 #include "diagnostics/downlink_trace.h"
 #include <cassert>
 #include <cstdio>
 int main() {
     using namespace Diagnostics;
+    RxServiceProbe rx;
+    rx.begin(0xfffffff0u);rx.end(0x10u);
+    assert(rx.workMaxUs.load()==32 && rx.idleMaxUs.load()==0);
+    rx.begin(0x30u);rx.end(0x35u);
+    assert(rx.idleMaxUs.load()==32 && rx.workMaxUs.load()==32);
+    rx.begin(0x10030u);rx.end(0x10031u);
+    assert(rx.idleMaxUs.load()==0xfffbu);
+    RxServiceProbe::maximum(rx.queueMaxUs,500);
+    RxServiceProbe::maximum(rx.queueMaxUs,20);
+    assert(rx.queueMaxUs.load()==500);
     assert(percentTenths(250000,1000000)==250);
     assert(percentTenths(0,0)==0);
     assert(percentTenths(110,100)==1000);

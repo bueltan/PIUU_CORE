@@ -183,3 +183,37 @@ With `PIUU_UART_DIAGNOSTICS=1`, `EARS` includes `queue`, cumulative `peak` and
 sampling disabled. They distinguish consumer scheduling stalls from UART FIFO
 or driver overflow. Larger or sustained stalls can still fill this bounded queue;
 measure these values and heap headroom in the next integrated test.
+
+### Locating downlink UDP loss
+
+`PIUU_NETWORK_DIAGNOSTICS=1` enables `UDP_RX_SERVICE` every five seconds. No
+allocation or printing occurs in the RX task. The values are cumulative maxima
+in microseconds since task startup, and include any preemption during measurement:
+
+- `idle_max_us`: interval between RX iterations, including the deliberate 1 ms
+  yield, scheduling delays and time when this task did not execute.
+- `work_max_us`: complete active iteration, excluding its deliberate yield.
+- `socket_max_us`: socket polling, including UDP mutex acquisition.
+- `dispatch_max_us`: socket read and envelope/control dispatch.
+- `queue_max_us`: Opus parsing and jitter insertion, including its mutex wait.
+
+Compare these with `OPUS_RX` arrival gaps and `UDP_IO` lock failures. A long
+arrival gap with short RX service times suggests loss before application insertion;
+it alone does not distinguish the radio/network from lwIP socket drops. A long
+service time identifies a local delay worth investigating. Timings do not directly
+measure CPU utilization or socket overflow, and a successful send only confirms
+local acceptance.
+
+For the same integrated run, capture traffic in a second SSH terminal on the VPS:
+
+```bash
+sudo timeout 240s tcpdump -i any -nn -s 0 -w backend-udp-test.pcap 'udp port 9999'
+```
+
+Start capture before the devices. Keep the capture and matching backend/serial
+logs. The capture contains PCM and Opus traffic. Inspect the final tcpdump capture
+drop count before treating missing packets as evidence. Compare response IDs and
+sequence numbers at server egress with those observed by CORE. VPS capture cannot
+prove delivery to the ESP32; isolating radio loss from socket loss may require an
+AP/router-side capture. This investigation does not change retransmission,
+transport choice, task affinity, priorities or audio buffer sizes.

@@ -2,6 +2,8 @@
 
 ## 2026-10-11
 
+- Add optional UDP RX scheduling and processing timing probes for downlink loss investigation.
+
 - Add configurable 480 ms EARS PCM queue headroom and drain again after UI work.
 - Report PCM queue occupancy, peak and consumer polling gap with UART diagnostics.
 

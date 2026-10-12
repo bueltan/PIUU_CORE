@@ -1,3 +1,4 @@
+#include "diagnostics/rx_service.h"
 #include "hardware/app_log.h"
 /**
  * @file audio_downlink.cpp
@@ -521,6 +522,10 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len, uint32_t packetE
  * usable audio data is read.
  * @param parameter Unused FreeRTOS task argument.
  */
+#if PIUU_NETWORK_DIAGNOSTICS
+static Diagnostics::RxServiceProbe rxService;
+#endif
+
 static void udpRxTask(void *parameter)
 {
     (void)parameter;
@@ -528,22 +533,44 @@ static void udpRxTask(void *parameter)
 
     while (true)
     {
+#if PIUU_NETWORK_DIAGNOSTICS
+        rxService.begin(micros());
+        uint32_t operationStart=micros();
+#endif
         const uint32_t packetEpoch=requestedEpoch.load();
         int packetSize = serverLinkParsePacket();
+#if PIUU_NETWORK_DIAGNOSTICS
+        Diagnostics::RxServiceProbe::maximum(rxService.socketMaxUs,micros()-operationStart);
+#endif
         int n = 0;
 
         if (packetSize > 0)
         {
+#if PIUU_NETWORK_DIAGNOSTICS
+            operationStart=micros();
+#endif
             n = serverLinkRead(rxBuf, sizeof(rxBuf));
+#if PIUU_NETWORK_DIAGNOSTICS
+            Diagnostics::RxServiceProbe::maximum(rxService.dispatchMaxUs,micros()-operationStart);
+#endif
         }
 
         if (packetSize > 0 && n > 0)
         {
+#if PIUU_NETWORK_DIAGNOSTICS
+            operationStart=micros();
+#endif
             bool ok = parseAndQueuePacket(rxBuf, (size_t)n, packetEpoch);
+#if PIUU_NETWORK_DIAGNOSTICS
+            Diagnostics::RxServiceProbe::maximum(rxService.queueMaxUs,micros()-operationStart);
+#endif
             if (!ok)
                 malformedPackets++;
         }
-        else
+#if PIUU_NETWORK_DIAGNOSTICS
+        rxService.end(micros());
+#endif
+        if (!(packetSize > 0 && n > 0))
         {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
@@ -770,6 +797,10 @@ void audioDownlinkPollDiagnostics() {
         const auto pause=pauses;
         xSemaphoreGive(jitterMutex);
         lastReport=lastLine=now;remaining=8;
+        appLog().printf("[UDP_RX_SERVICE t=%lu] idle_max_us=%lu work_max_us=%lu socket_max_us=%lu dispatch_max_us=%lu queue_max_us=%lu\n",
+            (unsigned long)now,(unsigned long)rxService.idleMaxUs.load(),
+            (unsigned long)rxService.workMaxUs.load(),(unsigned long)rxService.socketMaxUs.load(),
+            (unsigned long)rxService.dispatchMaxUs.load(),(unsigned long)rxService.queueMaxUs.load());
         appLog().printf("[OPUS_RX t=%lu] epoch=%lu arrivals=%lu next=%lu gap_events=%lu forward_frames=%lu reorder_or_dup=%lu max_interval_ms=%lu intervals_ge100ms=%lu rx_age_ms=%lu skipped_frames=%lu sample_drop=%lu rebuf_n=%lu rebuf_total_ms=%lu rebuf_max_ms=%lu rebuf_active_ms=%lu\n",
             (unsigned long)now,(unsigned long)epoch,(unsigned long)arrivals,(unsigned long)next,
             (unsigned long)gaps,(unsigned long)forward,(unsigned long)reordered,(unsigned long)maxGap,
