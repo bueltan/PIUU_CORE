@@ -1,4 +1,9 @@
+#include "diagnostics/config.h"
 #include "diagnostics/rx_service.h"
+#include "diagnostics/dac_trace.h"
+#if PIUU_DAC_DIAGNOSTICS
+static Diagnostics::DacTrace dacTrace;
+#endif
 #include "hardware/app_log.h"
 /**
  * @file audio_downlink.cpp
@@ -432,10 +437,21 @@ static bool opusInit()
  * @brief Writes one zero-filled frame to the DAC when usable audio cannot be recovered.
  */
 static void writeMedia(const int16_t *pcm,size_t samples) {
+#if PIUU_DAC_DIAGNOSTICS
+    const uint32_t atMs=millis(),atUs=micros();
+    AudioOutputWriteResult result{};
+#endif
     {
         Diagnostics::Measure measure(Diagnostics::Operation::OutputWrite);
+#if PIUU_DAC_DIAGNOSTICS
+        result=audioOutputWrite(pcm,samples);
+#else
         audioOutputWrite(pcm,samples);
+#endif
     }
+#if PIUU_DAC_DIAGNOSTICS
+    dacTrace.record(expectedSeq,atMs,uint32_t(micros()-atUs),result.error,result.bytes,pcm,samples);
+#endif
     lastMediaWriteMs=millis();submittedMediaSamples.store(expectedSeq*320+uint32_t(samples));
 }
 static void writeSilenceFrame()
@@ -599,6 +615,9 @@ static void playbackTask(void *parameter)
             submittedMediaSamples.store(0);
             resetStreamState();
             epoch = requested;
+#if PIUU_DAC_DIAGNOSTICS
+            dacTrace.begin(epoch);
+#endif
             startedReported = finished = finishReported = false;
             processedEpoch.store(epoch);
         }
@@ -779,6 +798,18 @@ static void playbackTask(void *parameter)
  */
 
 void audioDownlinkPollDiagnostics() {
+#if PIUU_DAC_DIAGNOSTICS
+    Diagnostics::DacTrace::Sample dacSample{};
+    // One line per loop pass; playback never prints diagnostic dacSamples.
+    if(dacTrace.pop(dacSample)) {
+        appLog().printf("[DAC_WRITE t=%lu] epoch=%lu seq=%lu write_us=%lu err=%ld bytes=%lu expected=%lu peak=%lu mean_abs=%lu errors=%lu incomplete=%lu trace_drop=%lu\n",
+            (unsigned long)dacSample.atMs,(unsigned long)dacSample.epoch,(unsigned long)dacSample.sequence,
+            (unsigned long)dacSample.writeUs,(long)dacSample.error,(unsigned long)dacSample.bytes,
+            (unsigned long)dacSample.expectedBytes,(unsigned long)dacSample.peak,(unsigned long)dacSample.meanAbs,
+            (unsigned long)dacTrace.errorCount(),(unsigned long)dacTrace.incompleteCount(),
+            (unsigned long)dacTrace.droppedCount());
+    }
+#endif
 #if PIUU_NETWORK_DIAGNOSTICS
     static uint32_t lastReport=0,lastLine=0;
     static unsigned remaining=0;

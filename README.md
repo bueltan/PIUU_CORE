@@ -233,3 +233,16 @@ Comparar sus deltas con `INPUT_STATS.nack_recovered`, `missing` y `silence_frame
 del backend. Un frame solicitado que llega puede ser también un original tardío.
 La instrumentación existente permite desactivar estos logs. Validar heap mínimo
 bajo reproducción y conversación; las ventanas no cubren cortes de varios segundos.
+
+### Diagnóstico del inicio de salida DAC
+
+`PIUU_DAC_DIAGNOSTICS` está activo por defecto con `PIUU_DIAGNOSTICS`; definirlo
+como `0` elimina el muestreo y los logs. `DAC_WRITE` conserva los primeros cinco
+frames escritos de cada epoch y escrituras fallidas/incompletas, en una cola fija.
+El loop imprime las muestras; la tarea de reproducción no imprime estos logs.
+`t` es el instante anterior a `i2s_write`; `seq`, `epoch`, `write_us`, `err`,
+`bytes/expected`, `peak` y `mean_abs` permiten correlacionar el PCM decodificado
+con lo aceptado por I2S. Los niveles son valores absolutos PCM16 (0–32768), no
+una detección de voz. `errors`, `incomplete` y `trace_drop` son acumulados.
+Un envío aceptado por I2S no confirma que el DAC lo haya emitido por su salida
+analógica. No se modifica el canal, DMA ni la política de reproducción.

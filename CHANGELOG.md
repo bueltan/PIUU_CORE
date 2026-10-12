@@ -2,6 +2,8 @@
 
 ## 2026-10-11
 
+- Add optional bounded DAC onset PCM/write diagnostics without playback-task logging.
+
 - Reserve the recovery pool once at startup and prioritize requested frames.
 - Extend bounded uplink NACK recovery and expose successful retries, expiry and recovery counters.
 - Add delayed recovery, saturation and cross-language regression coverage.

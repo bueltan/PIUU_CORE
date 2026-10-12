@@ -54,10 +54,11 @@ bool audioOutputInit()
     return true;
 }
 
-void audioOutputWrite(const int16_t *pcm, size_t samples)
+AudioOutputWriteResult audioOutputWrite(const int16_t *pcm, size_t samples)
 {
     size_t bytesWritten = 0;
-    i2s_write(I2S_DAC_PORT, pcm, samples * sizeof(int16_t), &bytesWritten, portMAX_DELAY);
+    const esp_err_t error=i2s_write(I2S_DAC_PORT, pcm, samples * sizeof(int16_t), &bytesWritten, portMAX_DELAY);
+    return {int32_t(error),bytesWritten};
 }
 
 

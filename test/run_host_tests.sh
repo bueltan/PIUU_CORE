@@ -4,6 +4,9 @@ cd "$(dirname "$0")/.."
 task_test_dir=$(mktemp -d /tmp/piuu-host-tests.XXXXXX)
 trap 'rm -rf "$task_test_dir"' EXIT
 
+g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_dac_trace.cpp -o "$task_test_dir/dac_trace"
+"$task_test_dir/dac_trace"
+
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_metrics.cpp -o "$task_test_dir/metrics"
 "$task_test_dir/metrics"
 
