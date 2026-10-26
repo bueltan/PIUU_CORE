@@ -14,6 +14,7 @@ HardwareSerial &serial=Serial2; // Dedicated EARS UART; Serial remains the USB c
 SemaphoreHandle_t packetMutex=nullptr;
 QueueHandle_t audioQueue=nullptr,eventQueue=nullptr;
 TaskHandle_t worker=nullptr;
+EarsEyesSink eyesSink=nullptr;
 std::atomic<uint32_t> order{0},lastPacketMs{0},request{0};
 std::atomic_bool seenPeer{false},remoteStreaming{false};
 #if PIUU_UART_DIAGNOSTICS
@@ -58,6 +59,11 @@ void receive(void*,const EarsProtocol::PacketView &packet) {
     if (xSemaphoreTake(packetMutex,portMAX_DELAY)!=pdTRUE) return;
     const uint32_t serialOrder=order.fetch_add(1)+1;
     lastPacketMs.store(millis());seenPeer.store(true);
+    if(packet.kind==EarsProtocol::Kind::Event && packet.code==uint8_t(EarsProtocol::Event::Eyes)) {
+        xSemaphoreGive(packetMutex);
+        if(eyesSink)eyesSink(packet.payload,packet.size);
+        return; // Visual congestion must never overflow critical EARS events.
+    }
     if (packet.kind==EarsProtocol::Kind::Pcm) {
 #if PIUU_UART_DIAGNOSTICS
         if(haveRxSequence && packet.sequence!=expectedRxSequence) {
@@ -173,6 +179,7 @@ bool earsLinkBegin() {
     }
     return true;
 }
+void earsLinkSetEyesSink(EarsEyesSink sink) { eyesSink=sink; }
 bool earsLinkRequestStreaming(bool enabled) {
     if (!worker) return false;
     // One atomic value carries both desired state and revision. Repeated calls

@@ -7,6 +7,7 @@
 #include <Arduino.h>
 
 #include "ui/app_navigation.h"
+#include "eyes/runtime.h"
 
 #include "ui/ui_model.h"
 #include "config/settings.h"
@@ -22,8 +23,16 @@
 /**
  * @brief Activates and draws the home screen, preparing its editor when applicable.
  */
+void showEyesScreen() {
+    ++uiModel().screenRevision;
+    uiModel().screenEnteredMs=millis();
+    uiModel().screen=SCREEN_EYES;
+    eyesShow();
+}
+
 void showStartScreen()
 {
+    if(uiModel().screen==SCREEN_EYES)eyesHide();
     uiModel().settingsNotice="";
     ++uiModel().screenRevision;
     uiModel().screenEnteredMs=millis();
@@ -101,6 +110,7 @@ void showServerEditScreen()
  */
 void haltWithUiError()
 {
+    if(uiModel().screen==SCREEN_EYES)showStartScreen();
     if (uiModel().screen == SCREEN_START)
     {
         uiStatusSetError("Fatal error", "Check serial log");

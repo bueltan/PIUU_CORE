@@ -58,7 +58,12 @@ static void pong() {
     incoming.assign(wire,wire+n);
     uint8_t data[MAX_PACKET];assert(serverLinkParsePacket()==int(n));assert(serverLinkRead(data,sizeof(data))==0);
 }
+static unsigned eyePackets=0;
+static void eyeSink(const SessionProtocol::Packet& p) {
+    assert(p.size==9 && !memcmp(p.body,"color red",9));++eyePackets;
+}
 int main() {
+    serverLinkSetEyesSink(eyeSink);
     assert(conversationInit()); appServicesInit();appServicesRefreshConnectivity();appServicesPoll();
     assert(!appServicesReady() && !appServicesWifiReady() && binds==0 && draws==0);
     uiStatusRefreshStartScreen();assert(drawn==UI_ERROR && draws==1);
@@ -73,6 +78,19 @@ int main() {
     appServicesPoll();SessionProtocol::Packet hello{};assert(SessionProtocol::decode(sent.back().data(),sent.back().size(),hello) && hello.kind==SessionProtocol::Kind::Hello);
     assert(!appServicesServerReady());pong();assert(!appServicesServerReady());
     appServicesPoll();assert(appServicesServerReady());
+    { // Visual bursts do not consume the reliable control queue.
+        using namespace SessionProtocol;
+        uint8_t wire[MAX_PACKET],out[MAX_PACKET];const auto id=serverLinkIdentity();
+        const auto sendVisual=[&](Identity identity,uint16_t flags) {
+            const auto n=encode(wire,sizeof(wire),{Kind::Eyes,flags,identity,1,reinterpret_cast<const uint8_t*>("color red"),9});
+            incoming.assign(wire,wire+n);assert(serverLinkRead(out,sizeof(out))==0);
+        };
+        for(unsigned i=0;i<100;++i)sendVisual(id,0);
+        assert(eyePackets==100 && !serverLinkTakeFailure());
+        auto stale=id;++stale.response;sendVisual(stale,0);
+        stale=id;++stale.server;sendVisual(stale,0);sendVisual(id,1);
+        assert(eyePackets==100);
+    }
     uiStatusRefreshStartScreen();assert(drawn==UI_READY);
     const int before=draws;uiStatusRefreshStartScreen();assert(draws==before);
     assert(conversationStart() && conversationState()==ConversationState::Connecting && draws==before);

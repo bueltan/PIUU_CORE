@@ -15,6 +15,7 @@
 using namespace SessionProtocol;
 namespace {
 SessionClient client;
+ServerEyesSink eyesSink=nullptr;
 uint32_t handleEvent(SessionProtocol::Event event,uint32_t response,uint32_t utterance) {
     return conversationServerEvent(ConversationEvent(uint8_t(event)),response,utterance);
 }
@@ -79,6 +80,8 @@ bool serverLinkInit() {
     }
     initialized=true;return true;
 }
+void serverLinkSetEyesSink(ServerEyesSink sink) { eyesSink=sink; }
+Identity serverLinkIdentity() { return client.identity(); }
 bool serverLinkSend(const uint8_t *data,size_t size) { return initialized && client.sendBody(data,size,millis()); }
 void serverLinkResetHeartbeat() { if(configured) {client.reset();publish();} }
 bool serverLinkReachable() { return initialized && client.reachable(millis()); }
@@ -116,6 +119,11 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
         receivedMedia=view.id;memcpy(data,view.body,view.size);return view.size;
     }
     if(view.kind!=Kind::HelloAck && !sameSession(view.id,expected)) { ++staleRx;return 0; }
+    if(view.kind==Kind::Eyes) {
+        if(view.flags || !view.id.server || !sameTurn(view.id,expected) || view.id.response!=expected.response || !view.size || view.size>31) { ++staleRx;return 0; }
+        if(eyesSink) eyesSink(view);
+        return 0; // Never use the reliable conversation control queue for visuals.
+    }
     if(view.size>64) return 0;
     OwnedControl event{view.kind,view.flags,view.id,view.sequence,view.size,{}};
     if(view.size) memcpy(event.body,view.body,view.size);

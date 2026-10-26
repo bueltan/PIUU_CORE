@@ -1,6 +1,7 @@
 #include "hardware/app_log.h"
 #include "ui/ui_controller.h"
 #include "ui/touch_gesture.h"
+#include "ui/eyes_hold.h"
 #include "ui/ui_model.h"
 #include "config/settings.h"
 #include "app/app_services.h"
@@ -52,6 +53,7 @@ void pollWifi() {
 void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
     int index = -1;
     switch (uiModel().screen) {
+    case SCREEN_EYES: break;
     case SCREEN_START:
         switch (uiStartHandleTouch(x,y,phase)) {
         case UI_ACTION_MIC: uiStatusHandleConversationToggle(); break;
@@ -148,12 +150,19 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
 }
 void uiControllerInit() {
     uiStartInit(); uiSetupInit(); uiWifiInit(); uiWifiPasswordInit(); uiServerInit(); uiServerEditInit();
-    showStartScreen();
+    showEyesScreen();
 }
 void uiControllerPoll() {
     pollWifi();
     static TouchGesture gesture;
+    static EyesHold hold;
     TouchEvent event{};
+    if(uiModel().screen==SCREEN_EYES) {
+        // Drain releases first so a short touch cannot become a delayed hold.
+        for(unsigned i=0;i<16 && takeTouchEvent(event);++i)hold.edge(event,uiModel().screenEnteredMs);
+        if(hold.poll(millis())) { gesture=TouchGesture{};showStartScreen(); }
+        return;
+    }
     UiTouch touch{};
     if (takeTouchEvent(event) && gesture.consume(event,uiModel().screenRevision,uiModel().screenEnteredMs,touch))
         dispatch(touch.x,touch.y,touch.phase);

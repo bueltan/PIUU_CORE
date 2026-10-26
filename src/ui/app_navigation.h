@@ -35,3 +35,4 @@ void showServerEditScreen();
  * @brief Shows a fatal error if the home screen is active and blocks the calling task indefinitely.
  */
 void haltWithUiError();
+void showEyesScreen();

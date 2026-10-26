@@ -1,5 +1,10 @@
 #pragma once
 #include <Arduino.h>
+#include "protocol/session_protocol.h"
+// Register before RX starts. Sink must copy immediately and never block or draw.
+using ServerEyesSink=void(*)(const SessionProtocol::Packet&);
+void serverLinkSetEyesSink(ServerEyesSink);
+SessionProtocol::Identity serverLinkIdentity(); // loop only
 // Controller task: init/send/reset/poll. RX task: parse/read only.
 // Backend protocol adapter; the UDP transport below remains opaque.
 bool serverLinkInit();

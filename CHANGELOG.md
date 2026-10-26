@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-26
+
+- Boot into landscape PIUU_EYES; hold touch over five seconds to open the existing portrait UI.
+- Accept bounded UDP v3 and EARS UART eye commands with UDP visual priority and stale-response rejection.
+- Render in fixed four-row strips, follow playback for speaking gestures, and document commands and diagnostics.
+
 ## 2026-10-12
 
 - Update offline cross-language tests for the backend package layout; firmware unchanged.

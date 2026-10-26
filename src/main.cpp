@@ -3,6 +3,7 @@
 #include "diagnostics/uart.h"
 #include <Arduino.h>
 #include "hardware/display_hal.h"
+#include "eyes/runtime.h"
 #include "hardware/touch_hal.h"
 #include "app/app_services.h"
 #include "app/conversation.h"
@@ -35,6 +36,7 @@ void setup() {
     if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
     conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished});
     appServicesInit();
+    eyesInit();
     uiControllerInit();
     if (!conversationInit() || !earsSessionInit() || !startTouchTask() || !wifiServiceStart()) haltWithUiError();
     wifiServiceRequestConnect(settings().wifi, true);
@@ -71,8 +73,7 @@ void loop() {
         }
         case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
         case 2: audioDownlinkLogDiagnostics();break;
-        case 3:
-            break;
+        case 3: eyesLogDiagnostics();break;
         case 4:
         appLog().printf("[RESOURCE t=%lu] heap=%lu min_heap=%lu max_block=%lu loop_hwm_bytes=%lu\n",
             (unsigned long)millis(),(unsigned long)ESP.getFreeHeap(),(unsigned long)ESP.getMinFreeHeap(),
@@ -94,5 +95,6 @@ void loop() {
     // Drain again after UI and diagnostics, before deliberately yielding. The
     // conversation and UART consumer remain owned by this loop task.
     uiStatusHandleEarsNotice(earsSessionPoll());
-    delay(20);
+    eyesPoll(); // At most four TFT rows; service UART/audio again next loop.
+    delay(1);
 }

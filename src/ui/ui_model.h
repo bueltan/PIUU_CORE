@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "config/settings.h"
 #include "network/wifi_types.h"
-enum AppScreen { SCREEN_START, SCREEN_SETUP, SCREEN_WIFI, SCREEN_WIFI_PASSWORD, SCREEN_SERVER, SCREEN_SERVER_EDIT };
+enum AppScreen { SCREEN_START, SCREEN_SETUP, SCREEN_WIFI, SCREEN_WIFI_PASSWORD, SCREEN_SERVER, SCREEN_SERVER_EDIT, SCREEN_EYES };
 struct UiModel {
     AppScreen screen = SCREEN_START;
     uint32_t screenRevision = 0;

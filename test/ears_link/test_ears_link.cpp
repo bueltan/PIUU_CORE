@@ -23,7 +23,12 @@ static std::vector<uint8_t> pcm(uint32_t seq) {
     std::vector<uint8_t> p={'P','C','M','!',uint8_t(seq),uint8_t(seq>>8),uint8_t(seq>>16),uint8_t(seq>>24),128,2};
     for(int i=0;i<320;++i) { p.push_back(0xfe);p.push_back(0xff); }return p;
 }
+static std::atomic<unsigned> eyeEvents{0};
+static void eyeSink(const uint8_t* data,size_t size) {
+    assert(size==3 && data[0]=='x' && data[1]==' ' && data[2]=='1');++eyeEvents;
+}
 int main() {
+    earsLinkSetEyesSink(eyeSink);
     assert(!earsLinkRequestStreaming(true) && !earsLinkPeerOnline());
     assert(earsLinkBegin() && earsLinkBegin());
     assert(Serial2.baud==921600 && Serial2.rxPin==16 && Serial2.txPin==17 && Serial2.rxBuffer==4096);
@@ -57,6 +62,9 @@ int main() {
 #if PIUU_PERFORMANCE_DIAGNOSTICS || PIUU_UART_DIAGNOSTICS
     assert(earsLinkQueueStats().eventPeak==8);
 #endif
+    for(int i=0;i<100;++i)Serial2.inject(event(5,{'x',' ','1'}));
+    waitFor([]{return eyeEvents.load()==100;});
+    assert(!earsLinkTake(m) && earsLinkStats().eventDropped==2);
     const auto sent=earsLinkStats().commandsSent;now+=500;
     waitFor([&]{return earsLinkStats().commandsSent>sent;}); // Reaffirm desired state, recover lost CMD/peer reboot.
     now+=2501;assert(!earsLinkPeerOnline());

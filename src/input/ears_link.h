@@ -11,6 +11,9 @@ struct EarsLinkStats { uint32_t audioReceived,audioDropped,eventDropped,parseRej
 // setup/loop own lifecycle, command intent and queue consumption. Only RX/TX
 // worker touches HardwareSerial. Workers never touch conversation/UI/settings.
 bool earsLinkBegin();
+// Register before earsLinkBegin. Called on UART worker; copy only, no blocking.
+using EarsEyesSink=void(*)(const uint8_t*,size_t);
+void earsLinkSetEyesSink(EarsEyesSink);
 bool earsLinkRequestStreaming(bool enabled);
 bool earsLinkTake(EarsMessage &message);
 uint32_t earsLinkReceivedOrder();

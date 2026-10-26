@@ -4,6 +4,13 @@ cd "$(dirname "$0")/.."
 task_test_dir=$(mktemp -d /tmp/piuu-host-tests.XXXXXX)
 trap 'rm -rf "$task_test_dir"' EXIT
 
+g++ -std=c++11 -Wall -Wextra -I src test/eyes/test_control.cpp src/eyes/control.cpp src/eyes/engine/{eyes,gestures,command_values}.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_control"
+"$task_test_dir/eyes_control"
+g++ -std=c++11 -Wall -Wextra -I test/eyes/mocks -I src/eyes/engine test/eyes/test_renderer.cpp src/eyes/engine/{eyes,contour,renderer}.cpp -o "$task_test_dir/eyes_renderer"
+"$task_test_dir/eyes_renderer"
+g++ -std=c++11 -Wall -Wextra -I test/eyes/mocks -I test/services/mocks -I src test/eyes/test_runtime.cpp src/eyes/{control,runtime}.cpp src/eyes/engine/{eyes,gestures,command_values,contour,renderer}.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_runtime"
+"$task_test_dir/eyes_runtime"
+
 g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_recovery.cpp -o "$task_test_dir/downlink_recovery"
 "$task_test_dir/downlink_recovery"
 

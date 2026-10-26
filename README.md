@@ -1,7 +1,9 @@
 # PIUU_CORE
 
 CORE recibe audio PCM16LE mono a 16 kHz y eventos desde C3_EARS por UART,
-y envía comandos START/STOP en sentido inverso. El inicio puede ser touch o wake.
+y envía comandos START/STOP en sentido inverso. Inicia mostrando PIUU_EYES.
+Wake sigue disponible; para usar el micrófono de la UI, mantener touch más de
+cinco segundos y utilizar el botón MIC de la interfaz anterior.
 
 ## Cableado CORE ↔ EARS
 
@@ -176,7 +178,7 @@ The EARS PCM queue defaults to 24 frames (480 ms) and can be set at compile time
 with `PIUU_EARS_AUDIO_QUEUE_FRAMES`. Frames are consumed immediately; the queue
 is not a mandatory playback/capture delay. This adds 11664 bytes of queue payload
 versus the previous six frames. The loop services EARS both before UI work and
-again before its 20 ms yield, preserving a single owner for conversation state.
+again before its bounded eye-rendering step and 1 ms yield, preserving a single owner for conversation state.
 
 With `PIUU_UART_DIAGNOSTICS=1`, `EARS` includes `queue`, cumulative `peak` and
 `poll_gap_max_ms`. These inexpensive counters remain available with performance
@@ -276,3 +278,175 @@ Los límites CORE están en `src/audio/downlink_recovery.h`, los del backend en
 aceptadas. `recovered` también puede incluir un original retrasado; no garantiza
 que cada llegada corresponda a una retransmisión. Comparar con `OUTPUT_RECOVERY_STATS`,
 `OUTPUT_END_ACK`, `OUTPUT_END_TIMEOUT` y `PLAYBACK_FINISHED` del backend.
+
+
+## PIUU_EYES integrado
+
+Al arrancar se muestran ojos azules sobre fondo negro en horizontal (320×240,
+rotación 1). La emoción inicial es `neutral`, con blink y glance automáticos.
+Mantener touch **más de 5000 ms continuos** abre la UI anterior, conservada en
+vertical (240×320, rotación 0), con sus ajustes WiFi/servidor y botón MIC. Un toque
+corto en los ojos no acciona MIC. La liberación del toque largo no pulsa un botón
+al cambiar de pantalla. La calibración de touch existente no cambia: para salir
+de los ojos se mide el tiempo, sin depender de coordenadas.
+
+La UI permanece abierta hasta reiniciar; `showEyesScreen()` permite volver desde
+código. Los comandos y temporizadores visuales siguen funcionando mientras la
+UI está abierta, pero no dibujan sobre ella. Al mostrar ojos nuevamente se limpia
+la pantalla completa mediante franjas, incluso si el fondo no cambió.
+
+`ConversationState::Playing` activa las variaciones automáticas de habla; al
+terminar o interrumpir audio se desactivan. No se analiza PCM ni se modifica el
+estado de conversación desde un comando visual. El estado de habla no es un
+comando remoto y la secuencia automática es decorativa: no sincroniza palabras.
+Las emociones base y gestos explícitos se controlan con los mensajes siguientes.
+
+### Comandos compartidos por UDP y UART
+
+Cada mensaje contiene **un comando ASCII de 1 a 31 bytes**, sin NUL, CR ni LF.
+Los nombres son en inglés y minúsculas. Los valores inválidos y argumentos extra
+se rechazan sin cambios parciales. Los ajustes son volátiles, no se guardan en NVS.
+
+| Comando | Valores / efecto |
+| --- | --- |
+| `emotion NAME [hold_ms]` | neutral, happy, curious, calm, concerned, sad, excited |
+| `gesture NAME` | none, soft_emphasis, emphasis, question, acknowledge, glance, blink, doubleblink, sway |
+| `expr NAME [hold_ms]` | rest, connecting, listening, thinking, speaking, error, happy, curious, surprised, sad, sleepy, blink; también 0..11 |
+| `size 25..200` | Porcentaje del tamaño de cada ojo |
+| `x -160..160`, `y -120..120` | Offset horizontal/vertical en píxeles |
+| `gap 0..260` | Separación entre centros en píxeles |
+| `color NAME`, `background NAME` | blue, red, green, cyan, white, yellow, orange, purple, pink, black; también RRGGBB hexadecimal |
+| `roundness 0..100` | 0 reproduce el primer prototipo; 1..100 usa contornos con suavizado geométrico |
+| `duration 0..3000` | Duración de transición, en ms; inicialmente 260 |
+
+`hold_ms` predeterminado es 5000; rango 0..600000. Se cuenta después de la
+transición y luego se vuelve a neutral. Cero mantiene la pose hasta otro comando
+o, para una pose UDP, hasta terminar/cancelar su respuesta. Los gestos se suman a
+la emoción base, uno a la vez. Un nuevo gesto aceptado reemplaza al anterior;
+`gesture none` cancela el actual, sin desactivar blink/glance o habla automáticos.
+La orden `expr speaking` selecciona una pose; la reproducción real controla las
+variaciones de habla. No se incluye el demo del proyecto independiente.
+
+### Prioridad y caducidad
+
+- UDP tiene prioridad sobre emociones, expresiones y gestos de EARS. La reserva
+  dura `hold_ms + duration` para emoción/expresión y al menos 1000 ms para gesto.
+  Un gesto no acorta una reserva UDP ya existente. Una pose persistente (`hold_ms=0`)
+  reserva prioridad por 5000 ms; después EARS puede volver a controlar los ojos.
+- Los comandos visuales UART recibidos durante esa reserva se descartan al
+  procesarlos. No se guardan para ejecutarlos tarde. Los ajustes de color, fondo,
+  tamaño, posición, separación, suavizado y transición de EARS siguen aceptándose.
+  Para ajustes rige el último comando aplicado; se procesan UDP y después UART.
+- Cada transporte tiene una cola estática independiente de cuatro mensajes.
+  Cola llena descarta el nuevo mensaje; no espera al audio ni aborta la conversación.
+  Un comando que lleva más de 1000 ms en cola se descarta.
+- UDP exige la identidad de sesión, turno y respuesta vigente. Al terminar,
+  interrumpir, cambiar de respuesta o reconectar se liberan sus gestos/emociones
+  y su prioridad. Los ajustes permanecen. La secuencia UDP se valida contra
+  duplicados y desorden, con rollover de uint32.
+
+### UART desde EARS
+
+Se conserva UART2 y el framing binario existente. Se agrega **EVT code 0x05**:
+
+```
+"EVT!" | version=1 (u8) | code=5 (u8) | length (u16 LE) | ASCII command
+```
+
+Ejemplo `x 1`: `45 56 54 21 01 05 03 00 78 20 31`.
+EARS debe enviar estos bytes entre paquetes completos PCM!/EVT!, utilizando el
+mismo escritor serial; nunca intercalar el comando dentro de un frame PCM.
+No enviar líneas de texto sueltas ni comandos en UART0/USB: allí siguen los logs.
+El receptor extrae EVT 0x05 antes de las colas críticas WAKE/STOP, de modo que una
+ráfaga de gestos no consume su capacidad. No se agrega ACK ni reintento visual.
+El firmware de EARS todavía debe invocar este envío; sus eventos existentes siguen
+compatibles. Se puede construir un paquete sin enviarlo con:
+
+```bash
+python3 tools/eyes_command.py uart 'emotion happy 3000'
+python3 tools/eyes_command.py uart 'background blue'
+```
+
+### UDP desde el backend
+
+Se usa el socket existente de CORE, puerto **12000**, con el sobre PIU3 versión 3.
+La extensión opcional es **kind=25 (Eyes)**, flags=0. El cuerpo es el mismo comando
+ASCII. Cabecera de 38 bytes, todos los enteros big endian:
+
+```
+struct.pack('!4sBBHQQIIIH', b'PIU3', 3, 25, 0,
+            client_session, server_session, turn_id, response_id,
+            visual_sequence, len(command)) + command
+```
+
+`visual_sequence` es un contador uint32 independiente del de audio/eventos,
+creciente para la identidad completa. Usar la identidad vigente obtenida por el
+backend en la sesión, no constantes. Emoción/gesto/expr requieren turno y respuesta
+no cero; ajustes también se permiten cuando la identidad vigente tiene ceros.
+Esperar el ACK de `ResponseStarted` antes de enviar comandos de esa respuesta,
+pues CORE descarta identidades futuras. Repetir el mismo número no vuelve a aplicar
+un comando. Esta extensión es **best effort**, sin ACK ni garantía de entrega;
+no se reintentan comandos como controles críticos y el audio no espera por ellos.
+
+Ejemplo de construcción local (estos IDs de ejemplo no controlan una sesión real):
+
+```bash
+python3 tools/eyes_command.py udp 'emotion curious 2500' \
+  --client 1 --server 2 --turn 3 --response 4 --sequence 1
+```
+
+Agregar `--host IP_DE_CORE` envía el datagrama; hacerlo con IDs reales. El script
+por defecto sólo imprime bytes hexadecimales y no abre un puerto serial.
+
+Esta entrega prepara **el receptor de CORE**. El backend actual sigue siendo
+compatible para audio, pero su emisor debe añadir kind 25 y enviar cada paso de
+`set_expression_sequence` según su cronología. CORE no recibe JSON ni planes
+completos, ni reserva un framebuffer por paso. Los tiempos de estos comandos
+empiezan al aplicarlos: aún no hay planificación por PTS ni sincronía exacta con
+el DAC. No se modificó el backend ni el firmware de EARS en esta integración.
+
+### Renderizado, extensión y recursos
+
+`src/eyes/engine` contiene una copia del motor de PIUU_EYES, sin su `main.cpp`:
+`eyes` define poses y transiciones, `gestures` compone variaciones, `contour`
+calcula intersecciones y `renderer` envía regiones sucias. Las diferencias de
+integración son `Renderer::invalidate()` para volver desde la UI y
+`Gestures::cancel()` para reemplazar un gesto remoto. Mantener estas extensiones
+al actualizar la copia; CORE compila sin depender de la carpeta PIUU_EYES.
+
+`control` valida comandos y administra emoción, temporizador y prioridad.
+`admission` valida identidad/secuencia UDP; `runtime` copia mensajes desde los
+workers y aplica/renderiza sólo desde loop. La pantalla conserva un único dueño.
+No se crea una tarea visual, no se usa LVGL/Bluetooth ni se asigna memoria por
+comando o frame. El buffer de píxeles es **320×4×2 = 2560 bytes**. Las dos colas
+contienen ocho mensajes de 64 bytes en esta compilación ESP32, más sus estructuras
+FreeRTOS. El renderer completo ocupa 3232 bytes en esta compilación.
+
+Para añadir una emoción, extender `Emotion`, su nombre y `emotionPose()`, y luego
+el vocabulario del emisor/prompt. Para una expresión legacy, extender `Expression`,
+`presets` y `names` en `eyes.cpp`. Para un gesto, extender `Gesture`, las tablas de
+nombres/duración y `Gestures::apply()`, usando una envolvente que empiece y termine
+en cero. Mantener un solo gesto activo y valores acotados. Los diseños se cambian
+mediante geometría, sin guardar secuencias de imágenes en RAM. Cambiar las curvas
+redondeadas en `contour.cpp`; preservar el camino legacy si `roundness 0` debe
+seguir mostrando el prototipo original. Ejecutar la suite host tras actualizar.
+
+Se presenta como máximo una franja de cuatro filas por vuelta de loop, con cesión
+de 1 ms entre vueltas; los consumidores de audio/UART se atienden entre franjas.
+La cadencia objetivo es 33 ms, pero una presentación en progreso termina antes
+de comenzar otra. Una pose/configuración sin cambios no se retransmite. Cambiar
+fondo o volver de la UI repinta toda la pantalla por franjas. Los tiempos no son
+un límite de tiempo real bajo preempción.
+
+`[EYES]` registra comandos aceptados/invalid/stale/suppressed/drops acumulados,
+prioridad activa y métricas por ventana: frames terminados, peor paso, peor frame
+y tiempo de render. `max_step_us` incluye preparación y transferencia;
+`frame_max_us` incluye cesiones entre franjas. Comparar junto con `[RESOURCE]`,
+`[EARS]` y pérdidas/rebuffer de audio, especialmente con `size 200`, cambios de
+fondo y habla continua. La RAM estática compilada no equivale al heap libre con
+WiFi/Opus/tareas activos; medir éste en la placa antes de concluir el margen real.
+
+Validación local: suite host (prioridad, replay, caducidad, rollover, touch,
+renderizado incremental y ráfagas aisladas de UART/UDP), compilaciones `cyd` y
+`cyd2usb`. Queda pendiente cargar y verificar en CYD: orientación, toque largo,
+colores, heap mínimo y audio continuo con comandos concurrentes.
