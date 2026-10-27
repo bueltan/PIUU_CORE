@@ -11,7 +11,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-namespace { SilenceMonitor silence; bool speaking=false; ConversationMachine machine; QueueHandle_t events = nullptr; ConversationInputPort input{}; ConversationTransportPort transport{}; }
+namespace { SilenceMonitor silence; bool speaking=false; bool inputMuted=false, resumePending=false; uint32_t resumeAt=0; ConversationMachine machine; QueueHandle_t events = nullptr; ConversationInputPort input{}; ConversationTransportPort transport{}; }
 namespace {
 const char *stateName(ConversationState state) {
     switch(state) {
@@ -37,6 +37,8 @@ bool conversationInit() {
     return events != nullptr;
 }
 ConversationState conversationState() { return machine.state(); }
+bool conversationInputMuted() { return inputMuted; }
+
 bool conversationPostPlaybackEvent(PlaybackEvent event) {
     return events && xQueueSend(events, &event, 0) == pdTRUE;
 }
@@ -47,7 +49,7 @@ bool conversationStart() {
     if (transport.begin && !transport.begin()) { if(input.stop) input.stop();return false; }
     if (!audioUplinkBeginConversation()) { if(transport.cancel) transport.cancel(0);if (input.stop) input.stop();return false; }
     const auto before=machine.state();machine.begin();transition(before,"start");
-    audioDownlinkBeginTurn(machine.epoch());silence.reset(millis());speaking=false;
+    audioDownlinkBeginTurn(machine.epoch());silence.reset(millis());speaking=false;inputMuted=false;resumePending=false;
     return true;
 }
 void conversationClose() { conversationAbort(); }
@@ -55,6 +57,7 @@ void conversationAbort() {
 #if PIUU_DIAGNOSTICS
     if(machine.state()!=ConversationState::Idle) audioDownlinkLogDiagnostics();
 #endif
+    inputMuted=false;resumePending=false;
     if (input.stop) input.stop();
     if(transport.cancel) transport.cancel(transport.playedMs?transport.playedMs():0);
     audioUplinkClose();
@@ -65,6 +68,7 @@ bool conversationInterrupt() {
     if(machine.state()==ConversationState::Idle || !transport.interrupt) return false;
     const uint32_t played=transport.playedMs?transport.playedMs():0;
     if(!transport.interrupt(played)) return false;
+    inputMuted=false;resumePending=false;
     const auto before=machine.state();machine.speechStarted();
     audioDownlinkBeginTurn(machine.epoch());silence.activity(millis());speaking=false;
     transition(before,"manual_interrupt");return true;
@@ -75,10 +79,13 @@ uint32_t conversationServerEvent(ConversationEvent event,uint32_t response,uint3
     const uint32_t played=transport.playedMs?transport.playedMs():0;
     const auto before=machine.state();silence.activity(millis());
     if(event==ConversationEvent::SpeechStarted) {
+        inputMuted=false;resumePending=false;
         speaking=true;machine.speechStarted();audioDownlinkBeginTurn(machine.epoch());
     } else if(event==ConversationEvent::SpeechStopped) {
         speaking=false;machine.speechStopped();
     } else if(event==ConversationEvent::ResponseStarted) {
+        inputMuted=true;resumePending=false;
+        appLog().println("[MIC_GATE] muted=response_started");
         speaking=false;machine.responseStarted();audioDownlinkBeginTurn(machine.epoch());audioDownlinkExpectResponse();
     } else if(event==ConversationEvent::Ready) {
         machine.ready();silence.reset(millis());
@@ -105,6 +112,11 @@ void conversationPoll() {
     if (beforePlayback!=ConversationState::Listening && machine.state()==ConversationState::Listening) {
         if(transport.played) transport.played(transport.playedMs?transport.playedMs():0);
         silence.activity(millis());
+        if(inputMuted) { resumePending=true;resumeAt=millis()+CONVERSATION_ECHO_GUARD_MS; }
+    }
+    if(resumePending && int32_t(millis()-resumeAt)>=0) {
+        resumePending=false;inputMuted=false;silence.activity(millis());
+        appLog().println("[MIC_GATE] resumed=playback_finished");
     }
     if(machine.state()==ConversationState::Listening && !speaking && silence.quietMs(millis())>=CONVERSATION_IDLE_TIMEOUT_MS) {
         appLog().printf("[CONV] silence_close quiet_ms=%lu level=%u threshold=%u\n",

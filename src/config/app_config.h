@@ -97,3 +97,6 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 #ifndef CONVERSATION_ACTIVITY_LEVEL
 #define CONVERSATION_ACTIVITY_LEVEL 160u
 #endif
+
+// Half-duplex microphone guard after the DAC has finished playback.
+constexpr uint32_t CONVERSATION_ECHO_GUARD_MS = 250;

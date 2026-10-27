@@ -76,16 +76,25 @@ int main() {
     event(1);pcm(103);event(42,{1,2,3});earsSessionSetExtraEventSink(extra);earsSessionPoll();
     assert(extras==1 && be32(sent.back().data()+6)==3); // repeated wake must not reset input
     finishInput();
+    assert(conversationInputMuted());
+    assert(conversationPostPlaybackEvent({epoch-1,PlaybackEventKind::Finished}));conversationPoll();
+    assert(conversationInputMuted()); // Stale completion cannot unmute a new reply.
     assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Started}));conversationPoll();
     assert(conversationState()==ConversationState::Playing && streaming);
-    const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();assert(sent.size()==whilePlaying+1);
+    const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();assert(sent.size()==whilePlaying);
     conversationSetTransportPort({beginTransport,cancelTransport,nullptr,nullptr,interruptTransport,nullptr});
     const auto beforeInterrupt=sent.size();event(1);pcm(105);earsSessionPoll();
-    assert(conversationState()==ConversationState::Listening && sent.size()==beforeInterrupt+1 && cancels==1);
+    assert(conversationState()==ConversationState::Playing && sent.size()==beforeInterrupt && cancels==0);
+    assert(conversationInputMuted());
     finishInput();
     assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Finished}));conversationPoll();
     assert(conversationState()==ConversationState::Listening && streaming);
-    now+=29000;pcm(106,321);earsSessionPoll();
+    assert(conversationInputMuted());
+    pcm(106);earsSessionPoll();assert(sent.size()==beforeInterrupt);
+    now+=251;conversationPoll();assert(!conversationInputMuted());
+    pcm(107);earsSessionPoll();assert(sent.size()==beforeInterrupt+1);
+    assert(be32(sent.back().data()+6)==4); // Muting introduces no artificial UDP sequence gap.
+    now+=29000;pcm(108,321);earsSessionPoll();
     now+=2000;conversationPoll();assert(conversationState()==ConversationState::Listening && streaming);
     now+=30001;conversationPoll();assert(conversationState()==ConversationState::Idle && !streaming);
     const auto count=sent.size();
@@ -108,5 +117,5 @@ int main() {
     assert(earsSessionStats().pollGapMaxMs>=340);
 #endif
     hostStopWorkers();
-    puts("PASS: touch/wake start, ordered PCM/STOP, stale input, sequence gaps/rollover, continuous response stream, offline/rejected wake and overflow");
+    puts("PASS: touch/wake start, ordered PCM/STOP, stale input, sequence gaps/rollover, half-duplex PCM/wake guard and resume, offline/rejected wake and overflow");
 }

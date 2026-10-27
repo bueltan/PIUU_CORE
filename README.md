@@ -1,5 +1,47 @@
 # PIUU_CORE
 
+## Microphone guard and SD logs (UART0 builds)
+
+CORE now runs half-duplex: from `ResponseStarted` until playback completes, it
+continues draining EARS UART but discards microphone PCM instead of sending it to
+the backend. It also ignores WAKE events during that interval, so the speaker
+cannot trigger WALLE or interrupt its own response. STOP and touch cancellation
+remain available. After playback completes, `CONVERSATION_ECHO_GUARD_MS` adds
+250 ms before microphone forwarding resumes. This intentionally disables spoken
+barge-in while PIUU talks; it is not acoustic echo cancellation. Muted frames do
+not advance UDP PCM sequence/PTS and are never buffered for later transmission.
+EARS continues reading its microphone and feeding KEYWORD.
+
+`cyd-uart0` and `cyd2usb-uart0` now enable `PIUU_SD_LOG=1`. Insert a FAT-formatted
+microSD before powering up. CORE app logs go to `/piuu-core.log`; at approximately
+1 MiB it rotates to `/piuu-core.previous.log`, retaining two files. Reboots append
+a boot marker to the current file. Read the files on a PC after powering CORE off.
+
+The SD uses a dedicated VSPI instance at 4 MHz with configurable build flags:
+`PIUU_SD_SCK=18`, `PIUU_SD_MISO=19`, `PIUU_SD_MOSI=23`, `PIUU_SD_CS=5`.
+These pins must match the board's microSD socket. TFT remains on HSPI and touch
+uses its existing separate bit-banged pins. Do not connect other devices to the
+SD pins. Standard builds keep their serial logging route.
+
+A low-priority worker owns all SD operations. Producers enqueue without waiting;
+16 chunks of 192 bytes hold up to 3072 payload bytes. The worker stack is 4096
+bytes, in addition to queue metadata and SD/filesystem allocations. Overflow
+drops log bytes and later records `dropped_bytes`; it never waits for card writes
+in the audio or UART path. Files flush every second. Abrupt power loss can lose
+recent logs or damage the filesystem. A missing card or mount/write failure
+silences SD logging until restart, without falling back to the binary UART0.
+Set `PIUU_SD_LOG=0` in the build environment to disable it.
+
+Only `appLog()` messages are captured, including `[MIC_GATE]`, `[CONV_EVENT]`,
+`[EARS]`, resource and network diagnostics. ROM boot output, panic dumps and
+ESP-IDF logs are not redirected to SD. Hardware validation of the card, sustained
+audio playback and log recovery is still required after flashing.
+
+SD is the initial capture method because it also works when WiFi/backend fails.
+Forwarding logs via EARS would require a new framed message and rate limits on
+both firmware sides; raw text must never be added to the existing binary link.
+
+
 CORE recibe audio PCM16LE mono a 16 kHz y eventos desde C3_EARS por UART,
 y envía comandos START/STOP en sentido inverso. Inicia mostrando PIUU_EYES.
 Wake sigue disponible; para usar el micrófono de la UI, mantener touch más de
@@ -32,8 +74,8 @@ y [refactor](REFACTOR.md) para la separación de responsabilidades.
 ## Conversación continua y UDP v3
 
 Actualizar CORE y backend juntos: **PIU3 / versión 3**. Wake o touch abre una
-conversación; xAI `server_vad` detecta los turnos. El audio sigue transmitiéndose
-durante respuestas. Touch cierra; wake durante respuesta interrumpe. CORE cierra
+conversación; el proveedor detecta los turnos. El envío del micrófono se suspende
+durante respuestas y se reanuda al terminar la reproducción y la guarda de eco. Touch cierra; wake durante respuesta se ignora para evitar activaciones por eco. CORE cierra
 tras 30 segundos de silencio esperando una nueva intervención; el backend
 cierra xAI inmediatamente, sin conservar una conexión idle cinco minutos.
 
@@ -557,9 +599,9 @@ libre medido con WiFi, Opus y reproducción en funcionamiento.
 Para el nuevo cableado usar `cyd-uart0` (ILI9341) o `cyd2usb-uart0` (ST7789).
 EARS GPIO6 TX → CORE GPIO3 RX0; EARS GPIO7 RX ← CORE GPIO1 TX0, a 921600
 para audio/eventos. Las variantes originales `cyd`/`cyd2usb` conservan UART2.
-Las variantes UART0 silencian `appLog()` y no inicializan una consola sobre
-ese puerto. El mensaje de la ROM/bootloader al resetear es independiente.
-Los logs a microSD quedan pendientes; no se realizan escrituras SD actualmente.
+Las variantes UART0 envían `appLog()` a microSD mediante una cola sin espera;
+no inicializan una consola sobre ese puerto. El mensaje de la ROM/bootloader
+al resetear es independiente. Ver la sección de logs SD al inicio de este README.
 
 La carga usa el modo mantenimiento integrado en `esp32-c3-ears` y el script
 `../C3_EARS/tools/core_bridge.py`, con EARS GPIO10 → EN y GPIO2 → BOOT/GPIO0

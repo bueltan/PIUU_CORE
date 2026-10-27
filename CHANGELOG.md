@@ -2,6 +2,10 @@
 
 ## 2026-10-27
 
+- Suppress microphone uplink and wake triggers during replies with a 250 ms echo guard.
+- Add bounded asynchronous microSD application logs and file rotation for UART0 builds.
+- Test muted PCM, wake suppression, playback resume and continuous uplink sequence.
+
 - Add UART0 EARS build variants on GPIO3/1 with application logs muted.
 
 - Flip eyes to landscape rotation 3 and align touch coordinates.

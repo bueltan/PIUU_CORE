@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "audio/playback_event.h"
-// Input remains active throughout every non-Idle state.
+// UART input stays active; the controller gates microphone forwarding during replies.
 enum class ConversationState : uint8_t { Idle, Connecting, Listening, WaitingResponse, Playing };
 class ConversationMachine {
 public:

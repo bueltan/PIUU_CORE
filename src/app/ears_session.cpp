@@ -27,6 +27,7 @@ void handleEvent(const EarsEvent &event) {
         (unsigned long)millis(),unsigned(event.code),(unsigned long)event.order,unsigned(event.size),unsigned(conversationState()));
 #endif
     if (event.code==uint8_t(EarsProtocol::Event::Wake)) {
+        if(conversationInputMuted()) return; // Speaker audio must not wake/interrupt PIUU.
         if (conversationState()==ConversationState::Listening || conversationState()==ConversationState::Connecting) return; // Idempotent repeat, preserve turn sequence.
 
         wakePending=true;wakeOrder=event.order;
@@ -52,9 +53,10 @@ void handleAudio(const EarsAudioFrame &frame) {
         }
         if (delta>1) {
             earsLinkRecordConsumerGap(lastSequence+1,frame.sequence,frame.order);
-            stats.sequenceGaps+=delta-1;audioUplinkSkipFrames(delta-1); }
+            stats.sequenceGaps+=delta-1;if(!conversationInputMuted()) audioUplinkSkipFrames(delta-1); }
     }
     haveSequence=true;lastSequence=frame.sequence;
+    if(conversationInputMuted()) return; // Drain UART, retain sequence tracking, send no captured audio.
     conversationObserveAudio(frame.samples,PCM_FRAME_SAMPLES);
     if (audioUplinkSubmitFrame(frame.samples,PCM_FRAME_SAMPLES)) ++stats.forwarded;
 }

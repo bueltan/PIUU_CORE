@@ -16,3 +16,6 @@ ConversationAction conversationToggleInput();
 void conversationObserveAudio(const int16_t *samples, size_t count);
 
 void conversationLogDiagnostics();
+
+// Main-loop only: discard microphone PCM and wake events during reply/echo tail.
+bool conversationInputMuted();
