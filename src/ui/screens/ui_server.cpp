@@ -20,8 +20,8 @@ static TFT_eSPI_Button btnBack;
 
 static constexpr int LIST_X = 10;
 static constexpr int LIST_Y = 52;
-static constexpr int LIST_W = 220;
-static constexpr int ROW_H = 24;
+static constexpr int LIST_W = 300;
+static constexpr int ROW_H = 20;
 static constexpr int MAX_VISIBLE_ROWS = 7;
 
 static constexpr int BACK_X = 8;
@@ -85,7 +85,7 @@ static void drawTitle()
     screenLock();
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(2);
-    tft.setCursor(74, 16);
+    tft.setCursor(124, 16);
     tft.print("SERVER");
     screenUnlock();
 }
@@ -98,7 +98,7 @@ static void drawStatus()
     TFT_eSPI &tft = display();
 
     screenLock();
-    tft.fillRect(10, 36, 220, 14, TFT_BLACK);
+    tft.fillRect(10, 36, 300, 14, TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(1);
     tft.setCursor(10, 38);
@@ -116,10 +116,10 @@ static void drawButtons()
 
     screenLock();
 
-    btnAdd.initButton(&tft, 32, 295, 44, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"ADD", 2);
-    btnEdit.initButton(&tft, 88, 295, 52, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"EDIT", 2);
-    btnDelete.initButton(&tft, 150, 295, 50, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"DEL", 2);
-    btnOk.initButton(&tft, 208, 295, 44, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"OK", 2);
+    btnAdd.initButton(&tft, 45, 216, 64, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"ADD", 2);
+    btnEdit.initButton(&tft, 121, 216, 68, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"EDIT", 2);
+    btnDelete.initButton(&tft, 199, 216, 68, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"DEL", 2);
+    btnOk.initButton(&tft, 275, 216, 64, 34, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"OK", 2);
 
     btnAdd.drawButton(false);
     btnEdit.drawButton(false);
@@ -140,9 +140,9 @@ static void drawServerRow(int row, const String &value, bool selected)
     const uint16_t fg = selected ? TFT_BLACK : TFT_GREEN;
 
     String shown = value;
-    if (shown.length() > 20)
+    if (shown.length() > 46)
     {
-        shown = shown.substring(0, 20);
+        shown = shown.substring(0, 46);
     }
 
     screenLock();

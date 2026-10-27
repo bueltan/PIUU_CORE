@@ -9,6 +9,9 @@ public:
     using std::string::string;
     String() = default;
     String(const std::string &s) : std::string(s) {}
+    String(char c) : std::string(1,c) {}
+    String substring(size_t start, size_t end = std::string::npos) const { return substr(start, end == std::string::npos ? end : end-start); }
+    void remove(size_t start) { erase(start); }
     String(int n) : std::string(std::to_string(n)) {}
     void toCharArray(char *out, size_t size) const { if (size) { std::strncpy(out,c_str(),size-1); out[size-1]=0; } }
 };

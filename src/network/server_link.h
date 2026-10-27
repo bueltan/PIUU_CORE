@@ -31,3 +31,7 @@ bool serverLinkInterrupt(uint32_t playedMs);
 void serverLinkAcknowledgeEnd(uint32_t sequence);
 // Controller-only: bounded downlink recovery requests.
 bool serverLinkRequestDownlink(uint32_t base,uint16_t mask);
+
+// Loop-only eye-plan negotiation and nonblocking receipt ACK.
+bool serverLinkEyesPlansEnabled();
+bool serverLinkAcknowledgeEyesPlan(SessionProtocol::Identity,uint32_t sequence);

@@ -87,8 +87,12 @@ void Controller::releaseUdp(uint32_t now) {
     if(udpGesture_)gestures_.cancel(now);
     udpGesture_=false;
     if(!udpVisual_)return;
-    udpVisual_=false;timer_.cancel();gestures_.cancel(now);
+    neutral(now);
+}
+void Controller::neutral(uint32_t now,const Eyes::Pose* from) {
+    leaseMs_=0;udpVisual_=udpGesture_=false;timer_.cancel();gestures_.cancel(now);
     emotionMode_=true;emotion_=Eyes::Emotion::Neutral;
+    if(from)animator_.setPose(*from,now,0);
     animator_.setPose(Eyes::emotionPose(emotion_),now,config_.transitionMs);
 }
 }

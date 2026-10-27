@@ -26,7 +26,7 @@ static void drawTitle()
     screenLock();
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(2);
-    tft.setCursor(75, 20);
+    tft.setCursor(130, 16);
     tft.print("SETUP");
     screenUnlock();
 }
@@ -42,32 +42,32 @@ static void drawButtons()
 
     btnWifi.initButton(
         &tft,
-        120, 85,
-        160, 46,
+        85, 85,
+        140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"WIFI",
         2);
 
     btnServer.initButton(
         &tft,
-        120, 145,
-        160, 46,
+        235, 85,
+        140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"SERVER",
         2);
 
     btnTouch.initButton(
         &tft,
-        120, 205,
-        160, 46,
+        85, 155,
+        140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"TOUCH",
         2);
 
     btnBack.initButton(
         &tft,
-        120, 275,
-        120, 40,
+        235, 155,
+        140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"BACK",
         2);

@@ -10,7 +10,11 @@
 #include <cstring>
 #include <type_traits>
 namespace {
-HardwareSerial &serial=Serial2; // Dedicated EARS UART; Serial remains the USB console.
+#if PIUU_EARS_UART0
+HardwareSerial &serial=Serial;
+#else
+HardwareSerial &serial=Serial2;
+#endif
 SemaphoreHandle_t packetMutex=nullptr;
 QueueHandle_t audioQueue=nullptr,eventQueue=nullptr;
 TaskHandle_t worker=nullptr;

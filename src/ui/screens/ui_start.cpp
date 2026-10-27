@@ -16,19 +16,20 @@
 #include "config/settings.h"
 
 static TFT_eSPI_Button btnMic;
+static TFT_eSPI_Button btnEyes;
 static UiState uiState = UI_READY;
 
-static constexpr int MAIN_Y_OFFSET = 15;
+static constexpr int MAIN_Y_OFFSET = 0;
 
-static constexpr int SETUP_X = 188;
+static constexpr int SETUP_X = 274;
 static constexpr int SETUP_Y = 14 + MAIN_Y_OFFSET;
 static constexpr int SETUP_W = 36;
 static constexpr int SETUP_H = 36;
 
-static constexpr int MIC_BTN_CX = 120;
-static constexpr int MIC_BTN_CY = 235 + MAIN_Y_OFFSET;
+static constexpr int MIC_BTN_CX = 160;
+static constexpr int MIC_BTN_CY = 194 + MAIN_Y_OFFSET;
 static constexpr int MIC_BTN_W = 140;
-static constexpr int MIC_BTN_H = 78;
+static constexpr int MIC_BTN_H = 66;
 
 static const uint8_t micIcon32x32[] = {
     0x00, 0x07, 0xE0, 0x00, //         ██████
@@ -251,18 +252,18 @@ static void drawStatusText(const char *line1, const char *line2 = nullptr)
     TFT_eSPI &tft = display();
 
     screenLock();
-    tft.fillRect(10, 70 + MAIN_Y_OFFSET, 220, 90, TFT_BLACK);
-    tft.drawRect(10, 70 + MAIN_Y_OFFSET, 220, 90, TFT_GREEN);
+    tft.fillRect(10, 66 + MAIN_Y_OFFSET, 300, 82, TFT_BLACK);
+    tft.drawRect(10, 66 + MAIN_Y_OFFSET, 300, 82, TFT_GREEN);
 
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(2);
-    tft.setCursor(18, 88 + MAIN_Y_OFFSET);
+    tft.setCursor(18, 80 + MAIN_Y_OFFSET);
     tft.print(line1 ? line1 : "");
 
     if (line2)
     {
         tft.setTextSize(1);
-        tft.setCursor(18, 126 + MAIN_Y_OFFSET);
+        tft.setCursor(18, 118 + MAIN_Y_OFFSET);
         tft.print(line2);
     }
 
@@ -368,6 +369,8 @@ void uiStartDrawBase()
     screenUnlock();
 
     drawTitle();
+    btnEyes.initButton(&tft, 230, 32, 68, 36, TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"EYES", 2);
+    btnEyes.drawButton(false);
     drawSetupButton(false);
     drawWifiStatus();
     drawStatusText("Ready", "Tap MIC to talk");
@@ -442,6 +445,12 @@ void uiStartDrawWifiStatus()
  */
 UiStartAction uiStartHandleTouch(uint16_t x, uint16_t y, TouchPhase phase)
 {
+    if (btnEyes.contains(x, y))
+    {
+        btnEyes.drawButton(phase == TouchPhase::Press);
+        return phase == TouchPhase::Release ? UI_ACTION_EYES : UI_ACTION_NONE;
+    }
+
     if (isSetupTouched(x, y))
     {
         drawSetupButton(phase == TouchPhase::Press);

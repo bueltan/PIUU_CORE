@@ -40,7 +40,7 @@ void uiKeyboardDraw();
  */
 UiKeyboardAction uiKeyboardHandleTouch(uint16_t x, uint16_t y, TouchPhase phase);
 /**
- * @brief Changes the vertical offset in pixels and invalidates geometry for the next button
+ * @brief Clamps the vertical offset to 0..10 pixels and invalidates geometry for the next button
  * initialization.
  */
 void uiKeyboardSetVerticalOffset(int offsetY);

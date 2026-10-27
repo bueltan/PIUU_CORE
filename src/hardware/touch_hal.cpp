@@ -1,4 +1,5 @@
 #include "hardware/touch_hal.h"
+#include "hardware/display_geometry.h"
 #include <Arduino.h>
 #include <XPT2046_Bitbang.h>
 #include "hardware/pins.h"
@@ -43,8 +44,7 @@ bool getTouchPoint(uint16_t &x, uint16_t &y) {
   sx = constrain(sx, 0, 239);
   sy = constrain(sy, 0, 319);
 
-  x = sx;
-  y = sy;
+  DisplayGeometry::fromPortrait(sx, sy, x, y);
   return true;
 }
 

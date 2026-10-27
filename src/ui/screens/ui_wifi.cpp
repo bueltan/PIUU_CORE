@@ -18,8 +18,8 @@ static TFT_eSPI_Button btnBack;
 
 static constexpr int LIST_X = 10;
 static constexpr int LIST_Y = 52;
-static constexpr int LIST_W = 220;
-static constexpr int ROW_H = 24;
+static constexpr int LIST_W = 300;
+static constexpr int ROW_H = 20;
 static constexpr int MAX_VISIBLE_ROWS = 7;
 
 /**
@@ -32,7 +32,7 @@ static void drawTitle()
     screenLock();
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(2);
-    tft.setCursor(84, 16);
+    tft.setCursor(136, 16);
     tft.print("WIFI");
     screenUnlock();
 }
@@ -45,7 +45,7 @@ static void drawStatus()
     TFT_eSPI &tft = display();
 
     screenLock();
-    tft.fillRect(10, 36, 220, 14, TFT_BLACK);
+    tft.fillRect(10, 36, 300, 14, TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(1);
     tft.setCursor(10, 38);
@@ -74,7 +74,7 @@ static void drawButtons()
 
     btnScan.initButton(
         &tft,
-        65, 295,
+        80, 216,
         100, 34,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"SCAN",
@@ -82,7 +82,7 @@ static void drawButtons()
 
     btnBack.initButton(
         &tft,
-        175, 295,
+        240, 216,
         100, 34,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"BACK",
@@ -116,13 +116,13 @@ static void drawNetworkRow(int row, const String &name, int rssi, bool selected)
     tft.setCursor(LIST_X + 6, y + 6);
 
     String shownName = name;
-    if (shownName.length() > 20)
+    if (shownName.length() > 32)
     {
-        shownName = shownName.substring(0, 20);
+        shownName = shownName.substring(0, 32);
     }
     tft.print(shownName);
 
-    tft.setCursor(LIST_X + 180, y + 6);
+    tft.setCursor(LIST_X + 260, y + 6);
     tft.print(rssi);
 
     screenUnlock();

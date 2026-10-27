@@ -58,6 +58,7 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
         switch (uiStartHandleTouch(x,y,phase)) {
         case UI_ACTION_MIC: uiStatusHandleConversationToggle(); break;
         case UI_ACTION_SETUP: showSetupScreen(); break;
+        case UI_ACTION_EYES: showEyesScreen(); break;
         default: break;
         } break;
     case SCREEN_SETUP:

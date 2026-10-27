@@ -54,12 +54,13 @@ static void pong() {
         if(decode(it->data(),it->size(),hello) && hello.kind==Kind::Hello) break;
     }
     uint8_t wire[MAX_PACKET];hello.id.server=42;
-    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,3,hello.id,hello.sequence,nullptr,0});
+    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,7,hello.id,hello.sequence,nullptr,0});
     incoming.assign(wire,wire+n);
     uint8_t data[MAX_PACKET];assert(serverLinkParsePacket()==int(n));assert(serverLinkRead(data,sizeof(data))==0);
 }
-static unsigned eyePackets=0;
+static unsigned eyePackets=0,scheduledPackets=0;
 static void eyeSink(const SessionProtocol::Packet& p) {
+    if(p.kind==SessionProtocol::Kind::EyesPlan) { assert(p.size==12);++scheduledPackets;return; }
     assert(p.size==9 && !memcmp(p.body,"color red",9));++eyePackets;
 }
 int main() {
@@ -99,7 +100,28 @@ int main() {
     uiStatusRefreshStartScreen();assert(drawn==UI_LISTENING);
     assert(!conversationStart());
     conversationServerEvent(ConversationEvent::SpeechStopped,0,1);
-    conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    {
+        using namespace SessionProtocol;
+        assert(serverLinkOpenConversation()); // This UI fixture has no transport port installed.
+        auto identity=serverLinkIdentity();identity.response=1;
+        uint8_t wire[MAX_PACKET],out[MAX_PACKET];const uint8_t event[]={3,0,0,0,1};
+        auto size=encode(wire,sizeof(wire),{Kind::Event,0,identity,1,event,5});
+        incoming.assign(wire,wire+size);serverLinkRead(out,sizeof(out));appServicesPoll();
+        assert(serverLinkIdentity().response==1 && serverLinkEyesPlansEnabled());
+        const uint8_t plan[]={1,1,0,0,1,7,4,0xb0,0,0,0,0};
+        const auto deliverPlan=[&](Kind kind,Identity id,uint32_t seq) {
+            size=encode(wire,sizeof(wire),{kind,0,id,seq,plan,sizeof(plan)});
+            incoming.assign(wire,wire+size);assert(!serverLinkRead(out,sizeof(out)));
+        };
+        for(unsigned i=0;i<100;++i)deliverPlan(Kind::EyesPlan,identity,1);
+        assert(scheduledPackets==100 && !serverLinkTakeFailure());
+        auto stale=identity;++stale.response;deliverPlan(Kind::EyesPlan,stale,1);
+        deliverPlan(Kind::EyesPlan,identity,2);deliverPlan(Kind::EyesPlanAck,identity,1);
+        assert(scheduledPackets==100 && !serverLinkTakeFailure());
+        assert(serverLinkAcknowledgeEyesPlan(identity,1));
+        Packet ack{};assert(decode(sent.back().data(),sent.back().size(),ack) && ack.kind==Kind::EyesPlanAck && !ack.size);
+        serverLinkCloseConversation(0);
+    }
     assert(sink({epoch,PlaybackEventKind::Started}));conversationPoll();uiStatusRefreshStartScreen();assert(drawn==UI_SPEAKING);
     assert(sink({epoch,PlaybackEventKind::Finished}));conversationPoll();assert(conversationState()==ConversationState::Listening);
     uiStatusHandleConversationToggle();assert(conversationState()==ConversationState::Idle && drawn==UI_READY);

@@ -11,6 +11,8 @@ public:
     bool interrupt(uint32_t playedMs);
     void playbackFinished(uint32_t playedMs);
     bool requestDownlink(uint32_t base,uint16_t mask);
+    bool eyesPlansEnabled() const { return eyesPlans; }
+    bool acknowledgeEyesPlan(SessionProtocol::Identity identity,uint32_t sequence);
     using Sender=bool(*)(const uint8_t*,size_t);
     using Observer=void(*)(const char*,SessionProtocol::Identity,uint32_t,uint32_t);
     struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0,retransmitFailed=0,cacheExpired=0,nackAgeMaxMs=0; };
@@ -58,6 +60,7 @@ private:
     std::unique_ptr<FramePool> cache;size_t cursor=0;
     uint32_t nextTurn=0,nextRequest=0,lastHello=0,lastPing=0,lastPong=0,lastReceive=0,helloRequest=0;
     uint32_t helloStarted=0,helloAttempts=0;
+    bool eyesPlans=false;
     bool helloSent=false,pingSent=false,established=false,available=false,started=false,failed=false;
     bool emit(SessionProtocol::Kind,SessionProtocol::Identity,uint32_t,const uint8_t*,size_t,uint16_t=0);
     bool queue(SessionProtocol::Kind,const uint8_t*,size_t);

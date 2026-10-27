@@ -283,15 +283,21 @@ que cada llegada corresponda a una retransmisión. Comparar con `OUTPUT_RECOVERY
 ## PIUU_EYES integrado
 
 Al arrancar se muestran ojos azules sobre fondo negro en horizontal (320×240,
-rotación 1). La emoción inicial es `neutral`, con blink y glance automáticos.
-Mantener touch **más de 5000 ms continuos** abre la UI anterior, conservada en
-vertical (240×320, rotación 0), con sus ajustes WiFi/servidor y botón MIC. Un toque
-corto en los ojos no acciona MIC. La liberación del toque largo no pulsa un botón
-al cambiar de pantalla. La calibración de touch existente no cambia: para salir
-de los ojos se mide el tiempo, sin depender de coordenadas.
+rotación 3, invertida 180° respecto del prototipo anterior). La emoción inicial
+es `neutral`, con blink y glance automáticos. Ojos y UI comparten orientación.
+Mantener touch **más de 5000 ms continuos** abre la UI con ajustes WiFi/servidor
+y botón MIC. Las listas, menús y teclado están adaptados a 320×240. El botón
+**EYES**, junto a ajustes en la pantalla principal, vuelve a los ojos sin reiniciar.
+Desde ajustes, usar BACK para regresar a la pantalla principal.
+Un toque corto en los ojos no acciona MIC; soltar el toque largo no pulsa
+controles de la UI. La calibración original se conserva y sus coordenadas
+verticales se transforman a horizontal: `x = 319 - portrait_y`, `y = portrait_x`.
+La orientación común está en `src/hardware/display_geometry.h`.
+Para validar en hardware: mantener touch más de cinco segundos, comprobar MIC,
+SETUP y las teclas de ambos extremos del teclado, y regresar con BACK → EYES.
+Repetir durante reproducción para comprobar que la navegación no corta el audio.
 
-La UI permanece abierta hasta reiniciar; `showEyesScreen()` permite volver desde
-código. Los comandos y temporizadores visuales siguen funcionando mientras la
+Los comandos y temporizadores visuales siguen funcionando mientras la
 UI está abierta, pero no dibujan sobre ella. Al mostrar ojos nuevamente se limpia
 la pantalla completa mediante franjas, incluso si el fondo no cambió.
 
@@ -367,7 +373,7 @@ python3 tools/eyes_command.py uart 'emotion happy 3000'
 python3 tools/eyes_command.py uart 'background blue'
 ```
 
-### UDP desde el backend
+### Comandos UDP inmediatos (kind 25)
 
 Se usa el socket existente de CORE, puerto **12000**, con el sobre PIU3 versión 3.
 La extensión opcional es **kind=25 (Eyes)**, flags=0. El cuerpo es el mismo comando
@@ -398,12 +404,98 @@ python3 tools/eyes_command.py udp 'emotion curious 2500' \
 Agregar `--host IP_DE_CORE` envía el datagrama; hacerlo con IDs reales. El script
 por defecto sólo imprime bytes hexadecimales y no abre un puerto serial.
 
-Esta entrega prepara **el receptor de CORE**. El backend actual sigue siendo
-compatible para audio, pero su emisor debe añadir kind 25 y enviar cada paso de
-`set_expression_sequence` según su cronología. CORE no recibe JSON ni planes
-completos, ni reserva un framebuffer por paso. Los tiempos de estos comandos
-empiezan al aplicarlos: aún no hay planificación por PTS ni sincronía exacta con
-el DAC. No se modificó el backend ni el firmware de EARS en esta integración.
+### Planes de emociones sincronizados con audio (kind 26/27)
+
+La integración del backend `Server Wall-e-PCM-OPUS` y CORE ya implementa la
+extensión de planes. CORE anuncia `CAP_EYES_PLAN=0x0004` en HELLO; el backend
+la acepta devolviendo ese bit en HELLO_ACK cuando `expression_udp_enabled=True`.
+Si la respuesta de handshake no tiene el bit, CORE mantiene audio pero no admite
+planes. Un backend antiguo que rechaza HELLO flags=4 necesita actualizarse:
+este firmware no hace downgrade automático. `expression_tools_enabled=True`
+habilita la herramienta de IA que genera planes; una respuesta breve puede no
+usarla, sin que eso sea un error de transporte.
+
+Se conserva el sobre PIU3 v3 de 38 bytes:
+
+| Kind | Dirección | Contenido |
+| --- | --- | --- |
+| 26 `EyesPlan` | Backend → CORE | Plan binario completo, 12/20/28 bytes |
+| 27 `EyesPlanAck` | CORE → backend | Cuerpo vacío; flags=0, identidad y sequence iguales |
+
+Cada respuesta admite **un plan inmutable, sequence=1**. La secuencia es
+independiente de los comandos inmediatos kind 25. Sesión, turno y respuesta deben
+coincidir con la respuesta actual no cero. El backend espera el ACK de
+`ResponseStarted` y envía el plan antes del primer Opus, sin esperar el ACK visual
+para continuar audio. Un ACK confirma recepción, no reproducción física.
+
+Cuerpo big endian, sin JSON:
+
+```
+version:u8=1 | count:u8=1..3 | reserved:u16=0
+por paso: emotion:u8 | gesture:u8 | duration_ms:u16 | offset_ms:u32
+```
+
+Duraciones 1200..4000 ms; primer offset=0 y siguientes iguales a la suma de las
+duraciones anteriores. Máximo 12000 ms y **66 bytes por datagrama** con cabecera.
+Emociones ID 0..6: neutral, happy, curious, calm, concerned, sad, excited.
+Gestos ID 0..8: none, emphasis, question, acknowledge, glance, blink, doubleblink,
+soft_emphasis, sway. **soft_emphasis=7**; no usar el orden del schema de la IA como
+numeración. Todo el plan se valida antes de admitirlo.
+
+Ejemplo: happy/soft_emphasis por 2400 ms, curious/question por 1800 ms:
+
+```
+01 02 00 00 01 07 09 60 00 00 00 00 02 02 07 08 00 00 09 60
+```
+
+- El plan espera almacenado hasta que se escriben muestras al DAC. Emoción y gesto
+  se aplican juntos; las transiciones están incluidas en el intervalo del paso.
+- El reloj visual cuenta muestras aceptadas por I2S, incluidas PLC/silencio de
+  recuperación. No usa la secuencia de paquetes, que puede saltar. Interpola a
+  16 kHz hasta agotar las muestras encoladas y luego se congela durante rebuffer.
+  Las animaciones del plan también se congelan con ese reloj.
+- Es una **estimación de reproducción**, no un contador DMA ni una medición
+  acústica. La escritura I2S y sus buffers pueden introducir desfase. No se cambió
+  el estimador usado para truncar historial de voz. Validar sincronía real en CYD.
+- Un duplicado exacto se confirma otra vez sin reiniciar pose, gesto ni reloj.
+  Contenido conflictivo con la misma identidad/sequence se rechaza. Se conserva
+  la marca de deduplicación hasta cambiar la identidad, incluso tras cancelar o
+  terminar el plan.
+- Un plan tardío selecciona el paso vigente y omite gestos históricos. Saltos del
+  reloj que pierden pasos no producen ráfagas de gestos. Los cruces normales de
+  frontera toleran hasta 100 ms de retraso del loop; después se omite el gesto.
+- El plan reserva prioridad UDP desde su admisión hasta el último paso o la
+  cancelación. EARS puede seguir cambiando configuración; sus emociones/gestos
+  se descartan mientras dura la reserva. Los gestos explícitos del plan reemplazan
+  los automáticos. Un comando visual UDP inmediato cancela el plan; sus reintentos
+  posteriores no lo restauran. Los ajustes UDP no cancelan el plan.
+- Interrupción local/VAD, nueva respuesta, desconexión o fin de reproducción
+  invalidan el plan y su prioridad. Una respuesta corta corta los pasos restantes.
+  Al terminar la secuencia se vuelve a neutral; blink/glance y habla automática
+  siguen las reglas existentes. No se envía ni espera un comando remoto neutral.
+
+El backend reintenta como máximo dos veces más, a intervalos de al menos 100 ms,
+y descarta el pendiente a los 500 ms. Un fallo de ACK/cola visual nunca aborta audio.
+Plan y comandos comparten la cola visual UDP acotada; no usan la cola crítica de
+conversación. El receptor, scheduler y ACK se atienden en loop; RX sólo copia.
+
+`[EYES_PLAN]` muestra `negotiated`, `active`, `step` (0..2), disponibilidad del reloj,
+`played_est_ms`, planes aceptados, duplicados, rechazados y ACK enviados/fallidos.
+Correlacionar con `EYES_PLAN_SENT/ACK` del backend y con `[EARS]`, `[AUDIO]` y
+`[RESOURCE]`. `active=0` es normal cuando la IA no genera plan o éste terminó.
+
+Prueba integrada sin hardware (también conserva las regresiones de audio):
+
+```bash
+bash test/run_host_tests.sh '/home/denis/Documents/Wall-e Project/Server Wall-e-PCM-OPUS'
+```
+
+La prueba cruza el emisor Python real, el decoder/scheduler C++ y el ACK de
+SessionClient, y devuelve ese ACK al backend. Para validar en placa, cargar el
+firmware correspondiente y ejecutar el backend actualizado; comprobar handshake,
+respuesta con plan, interrupción a mitad de gesto, respuesta más corta que el plan,
+pausas de audio y configuración UART concurrente. Verificar ausencia de pérdidas
+adicionales de audio y medir heap mínimo. No se cargó firmware desde estas pruebas.
 
 ### Renderizado, extensión y recursos
 
@@ -415,11 +507,12 @@ integración son `Renderer::invalidate()` para volver desde la UI y
 al actualizar la copia; CORE compila sin depender de la carpeta PIUU_EYES.
 
 `control` valida comandos y administra emoción, temporizador y prioridad.
-`admission` valida identidad/secuencia UDP; `runtime` copia mensajes desde los
+`admission` valida identidad/secuencia de comandos; `plan` valida y reproduce
+secuencias acotadas; `runtime` copia mensajes desde los
 workers y aplica/renderiza sólo desde loop. La pantalla conserva un único dueño.
 No se crea una tarea visual, no se usa LVGL/Bluetooth ni se asigna memoria por
 comando o frame. El buffer de píxeles es **320×4×2 = 2560 bytes**. Las dos colas
-contienen ocho mensajes de 64 bytes en esta compilación ESP32, más sus estructuras
+contienen ocho mensajes de 72 bytes en esta compilación ESP32, más sus estructuras
 FreeRTOS. El renderer completo ocupa 3232 bytes en esta compilación.
 
 Para añadir una emoción, extender `Emotion`, su nombre y `emotionPose()`, y luego
@@ -450,3 +543,28 @@ Validación local: suite host (prioridad, replay, caducidad, rollover, touch,
 renderizado incremental y ráfagas aisladas de UART/UDP), compilaciones `cyd` y
 `cyd2usb`. Queda pendiente cargar y verificar en CYD: orientación, toque largo,
 colores, heap mínimo y audio continuo con comandos concurrentes.
+
+
+Compilación con planes: 117472 bytes de RAM estática, **264 bytes adicionales**
+respecto de la integración de comandos inmediatos (117208). El buffer de píxeles
+sigue siendo de 2560 bytes. El estado del plan tiene un límite de compilación de
+256 bytes; el cuerpo decodificado ocupa 28. Estos números no sustituyen el heap
+libre medido con WiFi, Opus y reproducción en funcionamiento.
+
+
+## UART0 y carga a través de EARS
+
+Para el nuevo cableado usar `cyd-uart0` (ILI9341) o `cyd2usb-uart0` (ST7789).
+EARS GPIO6 TX → CORE GPIO3 RX0; EARS GPIO7 RX ← CORE GPIO1 TX0, a 921600
+para audio/eventos. Las variantes originales `cyd`/`cyd2usb` conservan UART2.
+Las variantes UART0 silencian `appLog()` y no inicializan una consola sobre
+ese puerto. El mensaje de la ROM/bootloader al resetear es independiente.
+Los logs a microSD quedan pendientes; no se realizan escrituras SD actualmente.
+
+La carga usa el modo mantenimiento integrado en `esp32-c3-ears` y el script
+`../C3_EARS/tools/core_bridge.py`, con EARS GPIO10 → EN y GPIO2 → BOOT/GPIO0
+de CORE. Seguir el procedimiento de `../C3_EARS/README`: primero instalar el
+firmware actualizado en EARS una vez, luego ejecutar `info` y `flash`. El script
+restaura EARS normal automáticamente tras éxito; usar `run` tras un fallo.
+El puente programa a 115200 y requiere USB nativo de EARS. El botón Upload
+normal de estos entornos no invoca el puente: usar el script documentado.

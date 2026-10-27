@@ -66,21 +66,21 @@ static void drawHeader()
     TFT_eSPI &tft = display();
 
     String shown = uiModel().serverDraft;
-    if (shown.length() > 24)
+    if (shown.length() > 48)
     {
-        shown = shown.substring(shown.length() - 24);
+        shown = shown.substring(shown.length() - 48);
     }
 
     screenLock();
-    tft.fillRect(0, 34, 240, 62, TFT_BLACK);
+    tft.fillRect(0, 36, 320, 38, TFT_BLACK);
 
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(1);
     tft.setCursor(10, 38);
     tft.print(uiModel().settingsNotice.length() ? uiModel().settingsNotice.c_str() : "Server:");
 
-    tft.drawRect(10, 56, 220, 24, TFT_GREEN);
-    tft.setCursor(14, 64);
+    tft.drawRect(10, 50, 300, 24, TFT_GREEN);
+    tft.setCursor(14, 58);
     tft.print(shown);
     screenUnlock();
 }

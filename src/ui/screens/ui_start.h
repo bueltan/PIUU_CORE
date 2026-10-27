@@ -23,7 +23,8 @@ enum UiStartAction
 {
     UI_ACTION_NONE,
     UI_ACTION_MIC,
-    UI_ACTION_SETUP
+    UI_ACTION_SETUP,
+    UI_ACTION_EYES
 };
 
 /**

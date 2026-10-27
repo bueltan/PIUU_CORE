@@ -11,6 +11,9 @@ void audioDownlinkExpectResponse();
 
 // Conservative estimate; excludes the DAC DMA capacity, not an acoustic measurement.
 uint32_t audioDownlinkPlayedMs();
+// Visual-only consumed-media estimate. False until a current-epoch I2S write.
+// Includes accepted concealment; freezes after queued media drains in rebuffer.
+bool audioDownlinkVisualPosition(uint32_t &positionMs);
 
 void audioDownlinkLogDiagnostics();
 // Controller-only bounded sample drain; independent of performance diagnostics.

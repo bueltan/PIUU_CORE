@@ -69,20 +69,20 @@ static void drawHeader()
     TFT_eSPI &tft = display();
 
     String shownSSID = uiModel().wifiDraft.ssid.length() ? uiModel().wifiDraft.ssid : "<none>";
-    if (shownSSID.length() > 22)
+    if (shownSSID.length() > 32)
     {
-        shownSSID = shownSSID.substring(0, 22);
+        shownSSID = shownSSID.substring(0, 32);
     }
 
     String shownPass = uiModel().wifiDraft.password.length() ? uiModel().wifiDraft.password : "";
-    if (shownPass.length() > 26)
+    if (shownPass.length() > 48)
     {
-        shownPass = shownPass.substring(shownPass.length() - 26);
+        shownPass = shownPass.substring(shownPass.length() - 48);
     }
 
     screenLock();
 
-    tft.fillRect(0, 34, 240, 62, TFT_BLACK);
+    tft.fillRect(0, 36, 320, 38, TFT_BLACK);
 
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(1);
@@ -90,11 +90,11 @@ static void drawHeader()
     tft.setCursor(10, 38);
     tft.print(uiModel().wifiConnecting ? "Connecting..." : "SSID:");
 
-    tft.setCursor(10, 52);
+    tft.setCursor(110, 38);
     tft.print(shownSSID);
 
-    tft.drawRect(10, 66, 220, 24, TFT_GREEN);
-    tft.setCursor(14, 74);
+    tft.drawRect(10, 50, 300, 24, TFT_GREEN);
+    tft.setCursor(14, 58);
     tft.print(shownPass);
 
     screenUnlock();

@@ -1,6 +1,17 @@
 # Changelog
 
+## 2026-10-27
+
+- Add UART0 EARS build variants on GPIO3/1 with application logs muted.
+
+- Flip eyes to landscape rotation 3 and align touch coordinates.
+- Adapt all settings screens and keyboard to 320x240; add an EYES return button.
+
 ## 2026-10-26
+
+- Negotiate and acknowledge bounded UDP eye plans on a consumed-audio timeline.
+- Freeze plan animation during rebuffer; reject stale/conflicting plans and suppress duplicate gestures.
+- Add CORE/backend wire round-trip tests and integrated validation guidance.
 
 - Boot into landscape PIUU_EYES; hold touch over five seconds to open the existing portrait UI.
 - Accept bounded UDP v3 and EARS UART eye commands with UDP visual priority and stale-response rejection.

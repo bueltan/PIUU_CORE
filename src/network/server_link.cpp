@@ -82,6 +82,8 @@ bool serverLinkInit() {
 }
 void serverLinkSetEyesSink(ServerEyesSink sink) { eyesSink=sink; }
 Identity serverLinkIdentity() { return client.identity(); }
+bool serverLinkEyesPlansEnabled() { return client.eyesPlansEnabled(); }
+bool serverLinkAcknowledgeEyesPlan(Identity id,uint32_t sequence) { return client.acknowledgeEyesPlan(id,sequence); }
 bool serverLinkSend(const uint8_t *data,size_t size) { return initialized && client.sendBody(data,size,millis()); }
 void serverLinkResetHeartbeat() { if(configured) {client.reset();publish();} }
 bool serverLinkReachable() { return initialized && client.reachable(millis()); }
@@ -119,11 +121,13 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
         receivedMedia=view.id;memcpy(data,view.body,view.size);return view.size;
     }
     if(view.kind!=Kind::HelloAck && !sameSession(view.id,expected)) { ++staleRx;return 0; }
-    if(view.kind==Kind::Eyes) {
+    if(view.kind==Kind::Eyes || view.kind==Kind::EyesPlan) {
         if(view.flags || !view.id.server || !sameTurn(view.id,expected) || view.id.response!=expected.response || !view.size || view.size>31) { ++staleRx;return 0; }
+        if(view.kind==Kind::EyesPlan && (!view.id.turn || !view.id.response || view.sequence!=1 || view.size>28)) { ++invalidRx;return 0; }
         if(eyesSink) eyesSink(view);
         return 0; // Never use the reliable conversation control queue for visuals.
     }
+    if(view.kind==Kind::EyesPlanAck) { ++invalidRx;return 0; } // Server cannot acknowledge its own plan.
     if(view.size>64) return 0;
     OwnedControl event{view.kind,view.flags,view.id,view.sequence,view.size,{}};
     if(view.size) memcpy(event.body,view.body,view.size);

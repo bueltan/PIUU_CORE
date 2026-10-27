@@ -4,11 +4,17 @@ cd "$(dirname "$0")/.."
 task_test_dir=$(mktemp -d /tmp/piuu-host-tests.XXXXXX)
 trap 'rm -rf "$task_test_dir"' EXIT
 
+g++ -std=c++11 -Wall -Wextra -I test/ui/mocks -I test/services/mocks -I src test/ui/test_landscape.cpp src/ui/screens/*.cpp src/ui/widgets/*.cpp src/ui/ui_model.cpp -o "$task_test_dir/landscape"
+"$task_test_dir/landscape"
+
+g++ -std=c++11 -Wall -Wextra -I src test/eyes/test_plan.cpp src/eyes/plan.cpp src/eyes/engine/{eyes,gestures}.cpp src/network/session_client.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_plan"
+"$task_test_dir/eyes_plan"
+
 g++ -std=c++11 -Wall -Wextra -I src test/eyes/test_control.cpp src/eyes/control.cpp src/eyes/engine/{eyes,gestures,command_values}.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_control"
 "$task_test_dir/eyes_control"
 g++ -std=c++11 -Wall -Wextra -I test/eyes/mocks -I src/eyes/engine test/eyes/test_renderer.cpp src/eyes/engine/{eyes,contour,renderer}.cpp -o "$task_test_dir/eyes_renderer"
 "$task_test_dir/eyes_renderer"
-g++ -std=c++11 -Wall -Wextra -I test/eyes/mocks -I test/services/mocks -I src test/eyes/test_runtime.cpp src/eyes/{control,runtime}.cpp src/eyes/engine/{eyes,gestures,command_values,contour,renderer}.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_runtime"
+g++ -std=c++11 -Wall -Wextra -I test/eyes/mocks -I test/services/mocks -I src test/eyes/test_runtime.cpp src/eyes/{control,runtime,plan}.cpp src/eyes/engine/{eyes,gestures,command_values,contour,renderer}.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/eyes_runtime"
 "$task_test_dir/eyes_runtime"
 
 g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_recovery.cpp -o "$task_test_dir/downlink_recovery"
@@ -52,6 +58,9 @@ g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../
 g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/ears_session/test_ears_session.cpp test/services/mocks/runtime.cpp src/app/ears_session.cpp src/app/conversation.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/ears_session"
 "$task_test_dir/ears_session"
 
+g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_TEST_SERIAL_UART -DPIUU_EARS_UART0=1 -DPIUU_EARS_RX_PIN=3 -DPIUU_EARS_TX_PIN=1 -DPIUU_PERFORMANCE_DIAGNOSTICS=0 -DPIUU_UART_DIAGNOSTICS=0 -I test/ears_link/mocks -I test/services/mocks -I src test/ears_link/test_ears_link.cpp test/services/mocks/runtime.cpp src/input/ears_link.cpp src/protocol/ears_protocol.cpp -o "$task_test_dir/ears_uart0"
+"$task_test_dir/ears_uart0"
+
 for diagnostics_mode in perf uart off; do
     performance_diagnostics=0; uart_diagnostics=0
     if [[ "$diagnostics_mode" == perf ]]; then performance_diagnostics=1; fi
@@ -69,6 +78,7 @@ if [[ $# -gt 0 ]]; then
     backend_main="$1"
     if [[ -d "$backend_main" ]]; then backend_main="$backend_main/src/main.py"; fi
     backend_root="$(dirname "$(dirname "$backend_main")")"
+    python3 test/eyes/check_backend.py "$backend_root" "$task_test_dir/eyes_plan" "$task_test_dir/eye-plan.bin" "$task_test_dir/eye-ack.bin"
     g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_wire.cpp src/protocol/session_protocol.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/downlink_wire"
     "$task_test_dir/downlink_wire" write "$task_test_dir/downlink-nack.bin"
     python3 test/downlink_recovery/check_backend.py "$backend_root/src" "$task_test_dir/downlink-nack.bin" "$task_test_dir/downlink-end.bin"

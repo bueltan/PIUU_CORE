@@ -19,56 +19,56 @@ static int gKeyCenterY[45];
 static bool gKeyboardButtonsInitialized = false;
 
 // Keyboard placement
-static constexpr int KEY_W = 20;
-static constexpr int KEY_H = 26;
+static constexpr int KEY_W = 28;
+static constexpr int KEY_H = 25;
 static constexpr int KEY_GAP = 3;
 
 static constexpr int ROW1_X = 6;
-static constexpr int ROW1_Y = 102;
+static constexpr int ROW1_Y = 78;
 
 static constexpr int ROW2_X = 6;
-static constexpr int ROW2_Y = 132;
+static constexpr int ROW2_Y = 106;
 
 static constexpr int ROW3_X = 6;
-static constexpr int ROW3_Y = 162;
+static constexpr int ROW3_Y = 134;
 
-static constexpr int ROW4_X = 30;
-static constexpr int ROW4_Y = 192;
+static constexpr int ROW4_X = 52;
+static constexpr int ROW4_Y = 162;
 
-static constexpr int CAPS_CX = 35;
-static constexpr int CAPS_CY = 240;
-static constexpr int CAPS_W = 58;
+static constexpr int CAPS_CX = 34;
+static constexpr int CAPS_CY = 216;
+static constexpr int CAPS_W = 56;
 static constexpr int CAPS_H = 26;
 
-static constexpr int SPACE_CX = 120;
-static constexpr int SPACE_CY = 240;
-static constexpr int SPACE_W = 76;
+static constexpr int SPACE_CX = 104;
+static constexpr int SPACE_CY = 216;
+static constexpr int SPACE_W = 72;
 static constexpr int SPACE_H = 26;
 
-static constexpr int DEL_CX = 205;
-static constexpr int DEL_CY = 240;
-static constexpr int DEL_W = 48;
+static constexpr int DEL_CX = 169;
+static constexpr int DEL_CY = 216;
+static constexpr int DEL_W = 46;
 static constexpr int DEL_H = 26;
 
-static constexpr int MODE_CX = 45;
-static constexpr int MODE_CY = 272;
-static constexpr int MODE_W = 60;
+static constexpr int MODE_CX = 224;
+static constexpr int MODE_CY = 216;
+static constexpr int MODE_W = 52;
 static constexpr int MODE_H = 26;
 
-static constexpr int OK_CX = 175;
-static constexpr int OK_CY = 272;
-static constexpr int OK_W = 90;
+static constexpr int OK_CX = 284;
+static constexpr int OK_CY = 216;
+static constexpr int OK_W = 56;
 static constexpr int OK_H = 26;
 
-static int gKeyboardOffsetY = 5;
+static int gKeyboardOffsetY = 0;
 
 /**
- * @brief Changes the vertical offset in pixels and invalidates geometry for the next button
+ * @brief Clamps the vertical offset to 0..10 pixels and invalidates geometry for the next button
  * initialization.
  */
 void uiKeyboardSetVerticalOffset(int offsetY)
 {
-    gKeyboardOffsetY = offsetY;
+    gKeyboardOffsetY = offsetY < 0 ? 0 : (offsetY > 10 ? 10 : offsetY);
     gKeyboardButtonsInitialized = false;
 }
 

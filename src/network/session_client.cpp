@@ -20,7 +20,7 @@ void SessionClient::reset() {
     if(++id.client==0) ++id.client;
     id.server=0;id.turn=id.response=0;count=0;established=available=started=helloSent=pingSent=false;
     lastPong=lastReceive=0;awaitingResponseReset=false;if(cache) for(auto &f:*cache) f.valid=false;
-    helloAttempts=0;
+    helloAttempts=0;eyesPlans=false;
 }
 bool SessionClient::reachable(uint32_t now) const { return established && uint32_t(now-lastReceive)<6000; }
 bool SessionClient::ready(uint32_t now) const { return reachable(now) && available; }
@@ -61,6 +61,10 @@ bool SessionClient::requestDownlink(uint32_t base,uint16_t mask) {
     uint8_t body[6];put32(body,base);body[4]=uint8_t(mask>>8);body[5]=uint8_t(mask);
     return emit(Kind::DownlinkNack,id,base,body,6);
 }
+bool SessionClient::acknowledgeEyesPlan(Identity identity,uint32_t sequence) {
+    if(!eyesPlans || !id.turn || !id.response || !sameTurn(id,identity) || id.response!=identity.response || sequence!=1)return false;
+    return emit(Kind::EyesPlanAck,id,sequence,nullptr,0);
+}
 void SessionClient::playbackFinished(uint32_t playedMs) {
     if(!id.turn || !id.response) return;
     uint8_t body[4];put32(body,playedMs);queue(Kind::Played,body,4);
@@ -88,11 +92,12 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~3u)) {
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN))) {
         if(!(packet.flags&2)) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
         if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
+        eyesPlans=(packet.flags&CAP_EYES_PLAN)!=0;
         id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("HELLO_READY",available);
         return;
@@ -167,7 +172,7 @@ void SessionClient::poll(uint32_t now,bool online) {
     if(!helloSent || uint32_t(now-lastHello)>=(established?3000u:500u)) {
         if(++nextRequest==0) ++nextRequest;
         helloRequest=nextRequest;
-        const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,nullptr,0);
+        const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,nullptr,0,CAP_EYES_PLAN);
         if(!established) {
             if(!helloAttempts) helloStarted=now;
             ++helloAttempts;

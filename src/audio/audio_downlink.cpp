@@ -1,3 +1,4 @@
+#include "audio/visual_clock.h"
 #include "diagnostics/config.h"
 #include "diagnostics/rx_service.h"
 #include "diagnostics/dac_trace.h"
@@ -111,6 +112,25 @@ static std::atomic<uint32_t> processedEpoch{0};
 static std::atomic_bool expectResponse{false};
 static std::atomic<uint32_t> responseExpectedAt{0};
 static std::atomic<uint32_t> submittedMediaSamples{0};
+static std::atomic<uint32_t> visualRevision{0},visualConsumed{0},visualSubmitted{0},visualAt{0};
+static VisualClock visualClock; // Playback worker only; publish an atomic snapshot.
+static void publishVisualClock() {
+    ++visualRevision;
+    visualConsumed=visualClock.consumed;visualSubmitted=visualClock.submitted;visualAt=visualClock.atMs;
+    ++visualRevision;
+}
+bool audioDownlinkVisualPosition(uint32_t &positionMs) {
+    const uint32_t epoch=requestedEpoch.load();
+    if(!epoch || processedEpoch.load()!=epoch)return false;
+    for(unsigned i=0;i<2;++i) {
+        const uint32_t revision=visualRevision.load();if(revision&1)continue;
+        VisualClock snapshot{visualConsumed.load(),visualSubmitted.load(),visualAt.load()};
+        if(revision!=visualRevision.load() || requestedEpoch.load()!=epoch || processedEpoch.load()!=epoch)continue;
+        if(!snapshot.submitted)return false;
+        positionMs=snapshot.samples(millis())/16;return true;
+    }
+    return false;
+}
 static uint32_t lastMediaWriteMs=0;
 bool audioDownlinkEpochReady() { return processedEpoch.load()==requestedEpoch.load(); }
 uint32_t audioDownlinkPlayedMs() {
@@ -469,20 +489,21 @@ static bool opusInit()
 static void writeMedia(const int16_t *pcm,size_t samples) {
 #if PIUU_DAC_DIAGNOSTICS
     const uint32_t atMs=millis(),atUs=micros();
-    AudioOutputWriteResult result{};
 #endif
+    AudioOutputWriteResult result{};
     {
         Diagnostics::Measure measure(Diagnostics::Operation::OutputWrite);
-#if PIUU_DAC_DIAGNOSTICS
         result=audioOutputWrite(pcm,samples);
-#else
-        audioOutputWrite(pcm,samples);
-#endif
     }
 #if PIUU_DAC_DIAGNOSTICS
     dacTrace.record(expectedSeq,atMs,uint32_t(micros()-atUs),result.error,result.bytes,pcm,samples);
 #endif
     lastMediaWriteMs=millis();submittedMediaSamples.store(expectedSeq*320+uint32_t(samples));
+    // Partial writes contribute only accepted samples. This estimates DAC progress,
+    // not acoustic output; driver/DMA timing must still be measured on hardware.
+    const size_t accepted=result.bytes/sizeof(int16_t);
+    visualClock.submit(uint32_t(accepted<samples?accepted:samples),lastMediaWriteMs);
+    publishVisualClock();
 }
 static void writeSilenceFrame()
 {
@@ -644,6 +665,7 @@ static void playbackTask(void *parameter)
         if (epoch != requested) {
             audioOutputFlush();
             submittedMediaSamples.store(0);
+            visualClock={};publishVisualClock();
             resetStreamState();
             epoch = requested;
 #if PIUU_DAC_DIAGNOSTICS

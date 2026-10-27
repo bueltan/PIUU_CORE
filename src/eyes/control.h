@@ -15,6 +15,7 @@ public:
     bool apply(const Command&,Source,uint32_t now);
     Eyes::Pose sample(uint32_t now,bool speaking);
     void releaseUdp(uint32_t now);
+    void neutral(uint32_t now,const Eyes::Pose* from=nullptr); // No new wall-clock lease.
     bool udpPriority(uint32_t now) const { return leaseMs_ && uint32_t(now-leaseStart_)<leaseMs_; }
     const Eyes::Config& config() const { return config_; }
     Eyes::Emotion emotion() const { return emotion_; }
