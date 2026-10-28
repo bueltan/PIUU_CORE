@@ -1,5 +1,96 @@
 # PIUU_CORE
 
+## CORE logs over LAN UDP (default for UART0 builds)
+
+`cyd-uart0` and `cyd2usb-uart0` enable `PIUU_UDP_LOG=1` and disable SD.
+EARS firmware and the audio protocol are unchanged. Logs go directly to a PC on
+CORE's WiFi subnet, not to the voice backend. UART0 remains a binary EARS link.
+
+After loading CORE, find its WiFi IPv4 address in the router's client list or
+network UI. On a PC on the same subnet, run from the PIUU_CORE directory:
+
+```bash
+python3 tools/capture_udp.py --host 192.168.1.123
+# Optional fixed output and duration (seconds):
+python3 tools/capture_udp.py --host 192.168.1.123 --duration 120 --output logs/integrated/core-udp-test.log
+```
+
+Replace the example IP with CORE's actual IP. Python uses only its standard
+library. Default output is `logs/integrated/core-udp-YYYYMMDD-HHMMSS.log`.
+Ctrl+C finishes partial lines and closes the file; no serial port is opened and
+neither board is reset. Use `tail -f` on the printed output path for live viewing.
+The serial capture script can run alongside it to capture EARS and KEYWORD.
+
+The PC subscribes to CORE UDP port 12001 every 3 seconds from one ephemeral UDP
+port. CORE grants one collector a 10-second renewable lease, restricted to its
+local subnet; after stopping capture, allow 10 seconds before another collector
+takes over. Allow outgoing UDP to CORE:12001 and replies in the PC firewall;
+WiFi client isolation must be off. No packets for 12 seconds produces a console
+warning. This unauthenticated diagnostic channel is intended for a trusted LAN;
+do not forward its port to the Internet.
+
+A priority-1 worker on core 0 owns a separate socket. Producers never wait for
+queue space or perform network operations. Four queue items retain 768 payload
+bytes (800 bytes of item storage plus FreeRTOS metadata); worker stack is 4096
+bytes, with additional network/library allocations. Overflow evicts old chunks;
+each producer call accepts at most 1024 bytes. Maximum transmission is 25 UDP
+datagrams/s, each at most 216 bytes including the diagnostic header (5.4 kB/s,
+excluding IP/WiFi overhead). No retransmissions are attempted. Without a
+subscriber, only a bounded recent backlog is retained. SD allocates no resources
+when disabled. This reduces logger allocation versus SD but is not a hardware
+latency or memory guarantee.
+
+Every five seconds a `[UDP_LOG]` heartbeat reports heap, internal free memory,
+worker stack headroom and cumulative dropped bytes. Packets carry `PLG1`, a boot
+identifier, sequence, dropped-byte counter, CORE uptime and payload length in a
+24-byte big-endian header. The receiver rejects malformed packets and unexpected
+sources, discards duplicate/reordered packets, reports sequence gaps and boot
+changes, and preserves UTF-8 across chunks. Log lines may be incomplete when
+bytes are dropped; timestamps on lines are PC receipt time in UTC. The first
+received packet establishes a baseline; earlier losses cannot be inferred.
+Only application logs are captured, not ROM messages or panic dumps. WiFi must
+connect; startup messages may already have been evicted before subscription.
+
+Validation: `python3 test/udp_log/test_capture_udp.py` checks malformed packets,
+loss/reorder/reboot handling, C++ encoder compatibility and real localhost UDP
+subscription/capture. After flashing, verify I2S/Opus startup, several audio
+replies, `[UART_ERR]`, `[UDP_LOG]` memory/headroom and drops; stop/restart the
+collector and disconnect/reconnect WiFi. Hardware coexistence remains to be
+verified. Disable with `PIUU_UDP_LOG=0`; SD and UDP cannot be enabled together.
+
+## Conversation inactivity
+
+CORE closes a listening conversation after `CONVERSATION_IDLE_TIMEOUT_MS=30000`
+without provider-detected speech. The provider inactivity clock restarts on server
+conversation events and after reply playback/echo guard; local microphone energy
+cannot reset it. This prevents ambient noise from keeping the session open.
+Response waiting and playback are excluded from this timeout.
+
+While provider speech is active, qualified local activity keeps the session alive;
+30 seconds without it closes a stale speech event. A separate configurable
+`CONVERSATION_SPEECH_WATCHDOG_MS=120000` bounds a speech event without an end even
+if background energy persists. This also limits a single uninterrupted utterance
+to two minutes; increase it if longer monologues are required. If the provider
+misses a real speech-start event, CORE may close after 30 seconds despite local
+voice. Backend VAD event delivery is therefore required for this policy.
+
+`CONVERSATION_ACTIVITY_LEVEL=600` measures mean absolute PCM16 amplitude, not RMS.
+It is an initial fixed setting above the 225–499 ambient means observed in the
+2026-10-28 capture, not an automatic calibration or speech classifier. Activity
+must stay at/above the threshold for `CONVERSATION_ACTIVITY_HOLD_MS=200`; a lower
+frame or an observation gap above 100 ms breaks qualification. Short spikes do
+not reset the local activity counter. This local counter is used only to recover
+from a stale provider speech event; quiet voices below this threshold can be missed. Tune using
+real microphone trials; KEYWORD's RMS threshold is not interchangeable.
+
+`PIUU_CONVERSATION_DIAGNOSTICS=1` independently enables one `[CONV_STATS]` line
+every five seconds while a conversation is active, even with general diagnostics
+disabled. It includes state, local level, elapsed quiet time, threshold, timeout,
+provider speech flag, qualification duration, microphone mute flag and
+`provider_quiet_ms`. Closure reports `source=provider_idle` or `speech_watchdog`. A
+`[CONV] silence_close` line identifies the actual timeout. These changes add no
+queue, task, dynamic allocation or audio processing buffer.
+
 ## Microphone guard and SD logs (UART0 builds)
 
 CORE now runs half-duplex: from `ResponseStarted` until playback completes, it
@@ -12,7 +103,8 @@ barge-in while PIUU talks; it is not acoustic echo cancellation. Muted frames do
 not advance UDP PCM sequence/PTS and are never buffered for later transmission.
 EARS continues reading its microphone and feeding KEYWORD.
 
-`cyd-uart0` and `cyd2usb-uart0` now enable `PIUU_SD_LOG=1`. Insert a FAT-formatted
+SD logging is optional and disabled in both UART0 environments. To test it,
+set `PIUU_SD_LOG=1` and `PIUU_UDP_LOG=0`. Insert a FAT-formatted
 microSD before powering up. CORE app logs go to `/piuu-core.log`; at approximately
 1 MiB it rotates to `/piuu-core.previous.log`, retaining two files. Reboots append
 a boot marker to the current file. Read the files on a PC after powering CORE off.
@@ -23,9 +115,21 @@ These pins must match the board's microSD socket. TFT remains on HSPI and touch
 uses its existing separate bit-banged pins. Do not connect other devices to the
 SD pins. Standard builds keep their serial logging route.
 
+SD storage starts only after the UDP cache, I2S, Opus decoder and audio tasks
+have initialized successfully. Before that, only the bounded log queue exists;
+early messages can overflow and are counted as dropped bytes. No SD file is
+written if WiFi/audio startup never succeeds. The worker attempts mounting once
+and holds an 8192-byte internal RAM reserve through mount/open, releasing it
+afterward. If the reserve, task or mount cannot be allocated, SD logging stays
+disabled until reboot; audio services remain active. This headroom does not
+guarantee sufficient RAM for every later workload. A new boot marker includes
+`audio_ready=1`; if mounting fails, the card may contain only an older session.
+
 A low-priority worker owns all SD operations. Producers enqueue without waiting;
-16 chunks of 192 bytes hold up to 3072 payload bytes. The worker stack is 4096
-bytes, in addition to queue metadata and SD/filesystem allocations. Overflow
+8 chunks of 192 bytes hold up to 1536 payload bytes. The worker stack is 4096
+bytes, in addition to queue metadata and SD/filesystem allocations. The mount
+allows only one open file (instead of the SD library default of five); rotation
+closes the old file before opening the next one. Overflow
 drops log bytes and later records `dropped_bytes`; it never waits for card writes
 in the audio or UART path. Files flush every second. Abrupt power loss can lose
 recent logs or damage the filesystem. A missing card or mount/write failure
@@ -37,7 +141,28 @@ Only `appLog()` messages are captured, including `[MIC_GATE]`, `[CONV_EVENT]`,
 ESP-IDF logs are not redirected to SD. Hardware validation of the card, sustained
 audio playback and log recovery is still required after flashing.
 
-SD is the initial capture method because it also works when WiFi/backend fails.
+The initial SD capture showed `driver_install failed: 257` (`ESP_ERR_NO_MEM`).
+The reduced queue saves 1552 bytes of queue item storage; limiting the filesystem
+to one open file also reduces mount allocations, whose actual saving depends on
+the framework. The 4096-byte worker stack and audio DMA configuration are retained.
+SD avoids network traffic, but still consumes RAM and CPU; it is not inherently
+cheaper than UDP in those resources.
+
+After flashing, check `[MEM] stage=sd_before_mount`, `sd_after_open`,
+`i2s_before_install` and `i2s_ready` for internal/DMA free bytes and largest blocks.
+`i2s_install_failed` includes a post-failure snapshot and the I2S error has its
+symbolic name. Every ten seconds `[SD_LOG]` reports worker stack headroom in bytes,
+maximum chunk-write/flush times in microseconds, and queued chunks. Long SD writes
+run in the logger task; queue overflow may truncate log lines. A missing SD cannot
+report its own mount failure through this sink.
+
+Validation on hardware: cold boot with the SD inserted, confirm `[SERVICES]
+UDP/audio ready` and `i2s_ready`, then test several spoken replies while EARS
+continues streaming. Inspect UART/audio counters, `dropped_bytes`, stack headroom
+and memory across replies. Check rotation past 1 MiB and a boot without the card.
+Build/host checks do not establish that SD/audio coexist reliably on the board.
+
+Once mounted, SD continues capturing through WiFi/backend disconnects.
 Forwarding logs via EARS would require a new framed message and rate limits on
 both firmware sides; raw text must never be added to the existing binary link.
 

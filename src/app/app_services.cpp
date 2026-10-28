@@ -31,6 +31,7 @@ bool appServicesStartIfNeeded() {
     started = true;
     serverLinkResetHeartbeat();
     appLog().println("[SERVICES] UDP/audio ready");
+    appLogStartStorage(); // SD must not compete with decoder/DMA/task startup.
     return true;
 }
 

@@ -2,6 +2,8 @@
 #include "audio/audio_output.h"
 #include "hardware/pins.h"
 #include "config/app_config.h"
+#include "diagnostics/heap_snapshot.h"
+#include <esp_err.h>
 
 static bool outputInitialized = false;
 
@@ -27,10 +29,12 @@ bool audioOutputInit()
     pins.data_out_num = I2S_DAC_DATA;
     pins.data_in_num = I2S_PIN_NO_CHANGE;
 
+    HeapSnapshot::capture().print(appLog(),"i2s_before_install");
     esp_err_t err = i2s_driver_install(I2S_DAC_PORT, &config, 0, nullptr);
     if (err != ESP_OK)
     {
-        appLog().printf("[I2S] driver_install failed: %d\n", err);
+        appLog().printf("[I2S] driver_install failed: %d (%s)\n", err, esp_err_to_name(err));
+        HeapSnapshot::capture().print(appLog(),"i2s_install_failed");
         return false;
     }
 
@@ -50,6 +54,7 @@ bool audioOutputInit()
         return false;
     }
 
+    HeapSnapshot::capture().print(appLog(),"i2s_ready");
     outputInitialized = true;
     return true;
 }
@@ -69,7 +74,7 @@ AudioOutputWriteResult audioOutputWrite(const int16_t *pcm, size_t samples)
     
     // Factor de escala ajustable (ej. 0.25 para reducir al 25% / -12dB, 
     // o puedes ajustarlo según necesites para evitar la saturación)
-    const float volumeScale = 0.25f; 
+    const float volumeScale = 0.4f; 
 
     for (size_t offset = 0; offset < samples; offset += chunk) {
         size_t n = std::min(chunk, samples - offset);

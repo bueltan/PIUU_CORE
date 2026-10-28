@@ -1,8 +1,16 @@
 #pragma once
 // Event logs and 5-second snapshots; independent of USB/UART log routing.
 #include "diagnostics/config.h"
-// SD logging takes priority; UART0 otherwise stays silent. UART1 debug is optional.
-#if PIUU_SD_LOG
+// Select exactly one asynchronous sink; UART0 otherwise stays silent.
+#if PIUU_SD_LOG && PIUU_UDP_LOG
+#error "Choose only one diagnostic sink: SD or UDP"
+#endif
+#if PIUU_UDP_LOG
+#include "hardware/udp_log.h"
+#include <esp_log.h>
+inline UdpAppLog &appLog() { return udpAppLog(); }
+inline void appLogBegin() { esp_log_level_set("*", ESP_LOG_NONE);udpLogBegin(); }
+#elif PIUU_SD_LOG
 #include "hardware/sd_log.h"
 #include <esp_log.h>
 inline SdAppLog &appLog() { return sdAppLog(); }
@@ -29,3 +37,9 @@ inline void appLogBegin() { esp_log_level_set("*", ESP_LOG_NONE); }
 inline decltype(Serial) &appLog() { return Serial; }
 inline void appLogBegin() { Serial.begin(115200); }
 #endif
+
+inline void appLogStartStorage() {
+#if PIUU_SD_LOG
+    sdLogStartStorage();
+#endif
+}

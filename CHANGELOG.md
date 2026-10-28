@@ -1,6 +1,22 @@
 # Changelog
 
+## 2026-10-28
+
+- Use provider inactivity for session closure; prevent ambient energy from renewing the deadline.
+- Bound stale speech events and test continuous-noise timeout recovery.
+
+- Qualify local activity above 600 for 200 ms; close idle listening even with stale provider speech.
+- Add independent conversation diagnostics and noise/stale-speech regression tests.
+
+- Enable bounded LAN UDP diagnostics with SD disabled in UART0 builds.
+- Add a Python capture tool with loss/reboot detection and wire/localhost tests.
+
 ## 2026-10-27
+
+- Defer SD mounting until audio services are ready; retain internal RAM headroom during mount.
+
+- Reduce SD logging to one open file and eight queued chunks; report DMA heap and SD latency/stack headroom.
+- Preserve the experimental UDP logger disabled while validating SD/audio coexistence.
 
 - Suppress microphone uplink and wake triggers during replies with a 250 ms echo guard.
 - Add bounded asynchronous microSD application logs and file rotation for UART0 builds.

@@ -95,8 +95,18 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 #endif
 
 #ifndef CONVERSATION_ACTIVITY_LEVEL
-#define CONVERSATION_ACTIVITY_LEVEL 160u
+#define CONVERSATION_ACTIVITY_LEVEL 600u
+#endif
+
+// Initial microphone-specific tuning: mean absolute PCM amplitude, not RMS.
+#ifndef CONVERSATION_ACTIVITY_HOLD_MS
+#define CONVERSATION_ACTIVITY_HOLD_MS 200u
 #endif
 
 // Half-duplex microphone guard after the DAC has finished playback.
 constexpr uint32_t CONVERSATION_ECHO_GUARD_MS = 250;
+
+// Bound a provider speech-start that never receives an end, even with noise.
+#ifndef CONVERSATION_SPEECH_WATCHDOG_MS
+#define CONVERSATION_SPEECH_WATCHDOG_MS 120000u
+#endif

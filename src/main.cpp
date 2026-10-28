@@ -71,7 +71,7 @@ void loop() {
             (unsigned long)queues.audio,(unsigned long)queues.audioPeak,(unsigned long)session.pollGapMaxMs);
         break;
         }
-        case 1: serverLinkLogDiagnostics();conversationLogDiagnostics();break;
+        case 1: serverLinkLogDiagnostics();break;
         case 2: audioDownlinkLogDiagnostics();break;
         case 3: eyesLogDiagnostics();break;
         case 4:

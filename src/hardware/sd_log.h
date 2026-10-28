@@ -8,3 +8,6 @@ public:
 };
 SdAppLog &sdAppLog();
 void sdLogBegin();
+
+// Called once audio, decoder and playback workers have been allocated.
+void sdLogStartStorage();

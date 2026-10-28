@@ -77,9 +77,13 @@ int main() {
     assert(extras==1 && be32(sent.back().data()+6)==3); // repeated wake must not reset input
     finishInput();
     assert(conversationInputMuted());
+    now+=31000;conversationPoll();
+    assert(conversationState()==ConversationState::WaitingResponse);
     assert(conversationPostPlaybackEvent({epoch-1,PlaybackEventKind::Finished}));conversationPoll();
     assert(conversationInputMuted()); // Stale completion cannot unmute a new reply.
     assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Started}));conversationPoll();
+    assert(conversationState()==ConversationState::Playing && streaming);
+    now+=31000;conversationPoll();
     assert(conversationState()==ConversationState::Playing && streaming);
     const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();assert(sent.size()==whilePlaying);
     conversationSetTransportPort({beginTransport,cancelTransport,nullptr,nullptr,interruptTransport,nullptr});
@@ -94,9 +98,25 @@ int main() {
     now+=251;conversationPoll();assert(!conversationInputMuted());
     pcm(107);earsSessionPoll();assert(sent.size()==beforeInterrupt+1);
     assert(be32(sent.back().data()+6)==4); // Muting introduces no artificial UDP sequence gap.
-    now+=29000;pcm(108,321);earsSessionPoll();
+    now+=29000;
+    conversationServerEvent(ConversationEvent::SpeechStarted,0,2);
+    for(unsigned i=0;i<11;++i) { pcm(108+i,800);earsSessionPoll();now+=20; }
     now+=2000;conversationPoll();assert(conversationState()==ConversationState::Listening && streaming);
-    now+=30001;conversationPoll();assert(conversationState()==ConversationState::Idle && !streaming);
+    conversationServerEvent(ConversationEvent::SpeechStarted,0,2);
+    // Stuck provider speech and steady ambient amplitude must still time out.
+    for(unsigned i=0;i<1501;++i) { now+=20;pcm(119+i,300);earsSessionPoll();conversationPoll(); }
+    assert(conversationState()==ConversationState::Idle && !streaming);
+    // Continuous loud noise without provider speech cannot renew the idle timer.
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    for(unsigned i=0;i<1501;++i) { now+=20;pcm(2000+i,1200);earsSessionPoll();conversationPoll(); }
+    assert(conversationState()==ConversationState::Idle && !streaming);
+    // A stuck provider event with continuous energy is bounded by its watchdog.
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    conversationServerEvent(ConversationEvent::SpeechStarted,0,3);
+    for(unsigned i=0;i<6001;++i) { now+=20;pcm(4000+i,1200);earsSessionPoll();conversationPoll();
+        if(i==2000) assert(conversationState()==ConversationState::Listening);
+    }
+    assert(conversationState()==ConversationState::Idle && !streaming);
     const auto count=sent.size();
     // Touch starts explicitly; already queued PCM cannot enter its new turn.
     pcm(200);assert(conversationToggleInput()==ConversationAction::Started && streaming);
