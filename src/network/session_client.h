@@ -5,6 +5,8 @@
 // Controller-owned transport state; the RX worker hands controls through a queue.
 class SessionClient {
 public:
+    using NotificationHandler=bool(*)();
+    void setNotificationHandler(NotificationHandler handler) { notificationHandler=handler; }
     using EventHandler=uint32_t(*)(SessionProtocol::Event,uint32_t,uint32_t);
     void setEventHandler(EventHandler handler) { eventHandler=handler; }
     void setEventReady(bool (*ready)()) { eventReady=ready; }
@@ -47,6 +49,9 @@ private:
     Sender sender=nullptr;
     Observer observer=nullptr;
     EventHandler eventHandler=nullptr;
+    NotificationHandler notificationHandler=nullptr;
+    bool notificationsEnabled=false;
+    uint32_t noticeRequest=0,lastNotice=0;
     struct EventAck { uint32_t sequence=0,played=0;SessionProtocol::Identity id{}; };
     EventAck eventAcks[16]{};
     uint32_t lastEvent=0;

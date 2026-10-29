@@ -11,7 +11,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-namespace { uint32_t providerActivityAt=0; SilenceMonitor silence; bool speaking=false; bool inputMuted=false, resumePending=false; uint32_t resumeAt=0; ConversationMachine machine; QueueHandle_t events = nullptr; ConversationInputPort input{}; ConversationTransportPort transport{}; }
+namespace { bool notificationPending=false; uint32_t notificationAt=0; uint32_t providerActivityAt=0; SilenceMonitor silence; bool speaking=false; bool inputMuted=false, resumePending=false; uint32_t resumeAt=0; ConversationMachine machine; QueueHandle_t events = nullptr; ConversationInputPort input{}; ConversationTransportPort transport{}; }
 namespace {
 const char *stateName(ConversationState state) {
     switch(state) {
@@ -55,12 +55,18 @@ bool conversationStart() {
     audioDownlinkBeginTurn(machine.epoch());silence.reset(millis());providerActivityAt=millis();speaking=false;inputMuted=false;resumePending=false;
     return true;
 }
+bool conversationStartNotification() {
+    if(!conversationStart()) return false;
+    inputMuted=true;notificationPending=true;notificationAt=millis();
+    appLog().println("[CONV] notification_start mic_muted=1");
+    return true;
+}
 void conversationClose() { conversationAbort(); }
 void conversationAbort() {
 #if PIUU_DIAGNOSTICS
     if(machine.state()!=ConversationState::Idle) audioDownlinkLogDiagnostics();
 #endif
-    inputMuted=false;resumePending=false;
+    inputMuted=false;resumePending=false;notificationPending=false;
     if (input.stop) input.stop();
     if(transport.cancel) transport.cancel(transport.playedMs?transport.playedMs():0);
     audioUplinkClose();
@@ -87,6 +93,7 @@ uint32_t conversationServerEvent(ConversationEvent event,uint32_t response,uint3
     } else if(event==ConversationEvent::SpeechStopped) {
         speaking=false;machine.speechStopped();
     } else if(event==ConversationEvent::ResponseStarted) {
+        notificationPending=false;
         inputMuted=true;resumePending=false;
         appLog().println("[MIC_GATE] muted=response_started");
         speaking=false;machine.responseStarted();audioDownlinkBeginTurn(machine.epoch());audioDownlinkExpectResponse();
@@ -102,6 +109,9 @@ void conversationObserveAudio(const int16_t *samples,size_t count) {
         silence.observe(samples,count,millis(),CONVERSATION_ACTIVITY_LEVEL,CONVERSATION_ACTIVITY_HOLD_MS);
 }
 void conversationPoll() {
+    if(notificationPending && uint32_t(millis()-notificationAt)>=20000) {
+        appLog().println("[CONV] notification_response_timeout");conversationAbort();
+    }
     if(transport.takeFailure && transport.takeFailure()) conversationAbort();
     if (machine.state() != ConversationState::Idle && !appServicesWifiReady()) conversationAbort();
     const ConversationState beforePlayback=machine.state();

@@ -1,6 +1,9 @@
 #include "input/ears_link.h"
 #include "diagnostics/config.h"
 #include "config/ears_config.h"
+#if PIUU_EARS_LOG
+#include "hardware/ears_log.h"
+#endif
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -149,6 +152,9 @@ void run(void*) {
         }
         // Parser owns its counter; expose only an atomic snapshot to loop.
         parseRejected.store(parser.rejected()+localAckErrors);
+#if PIUU_EARS_LOG
+        if(applied==request.load())earsLogPoll(serial);
+#endif
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

@@ -95,6 +95,8 @@ int main() {
     }
     uiStatusRefreshStartScreen();assert(drawn==UI_READY);
     const int before=draws;uiStatusRefreshStartScreen();assert(draws==before);
+    assert(conversationStartNotification() && conversationInputMuted());
+    conversationAbort();assert(!conversationInputMuted());
     assert(conversationStart() && conversationState()==ConversationState::Connecting && draws==before);
     uiStatusRefreshStartScreen();assert(drawn==UI_CONNECTING);
     conversationServerEvent(ConversationEvent::Ready,0,0);

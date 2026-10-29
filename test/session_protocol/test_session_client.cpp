@@ -20,6 +20,9 @@ static Packet last() {Packet p{};assert(decode(sent.back().data(),sent.back().si
 static Packet find(Kind k) {for(auto i=sent.rbegin();i!=sent.rend();++i){Packet p{};decode(i->data(),i->size(),p);if(p.kind==k)return p;}assert(false);return {};}
 static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;p.body=nullptr;p.size=0;c.receive(p,now);}
 static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=3|(p.flags&CAP_DEVICE_MAC);p.body=nullptr;p.size=0;c.receive(p,now);assert(c.ready(now));}
+static SessionClient *noticeClient=nullptr;
+static unsigned noticeCalls=0;
+static bool onNotice() { ++noticeCalls;return noticeClient->beginConversation(); }
 static uint32_t calls=0;
 static bool responseReady=false;
 static bool eventReady() { return responseReady; }
@@ -27,6 +30,21 @@ static uint32_t handleEvent(SessionProtocol::Event,uint32_t,uint32_t) { ++calls;
 static void put32(uint8_t*p,uint32_t n) {for(int i=3;i>=0;--i){p[i]=n;n>>=8;}}
 static void pcm(SessionClient&c,uint32_t seq,uint32_t now) {uint8_t b[658]={};memcpy(b,"PCM!",4);b[4]=1;put32(b+6,seq);put32(b+10,seq*320);b[14]=1;b[15]=64;b[16]=2;b[17]=128;assert(c.sendBody(b,sizeof b,now));}
 int main(int argc,char **argv){
+ if(argc==3 && !strcmp(argv[1],"--notice")) {
+  SessionClient device;noticeClient=&device;device.setNotificationHandler(onNotice);
+  assert(device.init(700,send));device.poll(0,true);
+  auto hello=find(Kind::Hello);hello.kind=Kind::HelloAck;hello.id.server=2;
+  hello.flags=3|CAP_NOTIFICATIONS;hello.body=nullptr;hello.size=0;device.receive(hello,0);
+  std::ifstream file(argv[2],std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+  Packet wake{};assert(decode(bytes.data(),bytes.size(),wake));device.receive(wake,1);device.poll(2,true);
+  auto request=find(Kind::Start);assert(request.size==4);
+  for(auto it=sent.rbegin();it!=sent.rend();++it) {
+   Packet packet{};decode(it->data(),it->size(),packet);
+   if(packet.kind==Kind::Start) { fwrite(it->data(),1,it->size(),stdout);return 0; }
+  }
+  return 1;
+ }
  if(argc==2 && !strcmp(argv[1],"--hello")) {
   const uint8_t mac[6]={0x02,0x12,0x34,0x56,0x78,0x9a};
   SessionClient device;assert(device.init(500,send,mac));device.poll(0,true);
@@ -43,6 +61,25 @@ int main(int argc,char **argv){
   recovery.receive(request,300);recovery.poll(300,true);
   assert(recovery.stats().retransmits==1 && last().sequence==0);
   fwrite(sent.back().data(),1,sent.back().size(),stdout);return 0;
+ }
+ // Negotiated idle notices reuse START and never interrupt an active conversation.
+ {
+  SessionClient n;noticeClient=&n;n.setNotificationHandler(onNotice);assert(n.init(900,send));
+  n.poll(0,true);auto h=find(Kind::Hello);assert(h.flags&CAP_NOTIFICATIONS);
+  h.kind=Kind::HelloAck;h.id.server=2;h.flags=3|CAP_NOTIFICATIONS;h.body=nullptr;h.size=0;n.receive(h,0);
+  auto session=n.identity();Packet wake{Kind::Notice,0,session,10,nullptr,0};
+  auto wrong=wake;wrong.id.server=3;n.receive(wrong,1);assert(!noticeCalls);
+  wrong=wake;wrong.flags=1;n.receive(wrong,1);assert(!noticeCalls);
+  n.receive(wake,1);assert(noticeCalls==1 && n.identity().turn);
+  n.poll(2,true);auto request=find(Kind::Start);
+  assert(request.size==4 && request.body[3]==10);
+  n.receive(wake,3);assert(noticeCalls==1);
+  wake.sequence=11;n.receive(wake,3);assert(noticeCalls==1); // busy
+  ack(n,Kind::Start,Kind::StartAck,4);n.cancel(0);n.poll(5,true);ack(n,Kind::Cancel,Kind::CancelAck,6);
+  wake.sequence=10;n.receive(wake,7);assert(noticeCalls==1); // delayed duplicate
+  wake.sequence=11;n.receive(wake,8);assert(noticeCalls==2);
+  n.reset();handshake(n,9);wake.id=n.identity();wake.sequence=12;
+  n.receive(wake,10);assert(noticeCalls==2); // old backend did not accept capability
  }
  // Stable device identity survives session resets, including an idle NAT failure.
  {

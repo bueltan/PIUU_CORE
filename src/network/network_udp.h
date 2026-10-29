@@ -19,12 +19,14 @@ bool networkUdpInit(uint16_t localPort);
 bool networkUdpSendRaw(const char *serverIp, uint16_t serverPort, const uint8_t *data, size_t len);
 
 /**
- * @brief Queries the next datagram size under udpMutex. Returns zero when no packet is available
- * or the lock cannot be acquired within 20 ms.
+ * @brief Returns the pending datagram size, retrying an unread buffer before
+ * parsing another packet. Returns zero for no data or a mutex timeout (20 ms).
+ * One RX consumer owns the parse/read sequence; TX may run between the calls.
  */
 int networkUdpParsePacket();
 /**
- * @brief Reads up to bufferSize bytes unchanged; returns zero for no data or a locking failure.
+ * @brief Reads a complete datagram unchanged. Mutex timeouts/zero-byte reads
+ * preserve it for retry. Oversized/partial datagrams and their tails are dropped.
  */
 int networkUdpRead(uint8_t *buffer, size_t bufferSize);
 // Controller only; cumulative local I/O counters, no worker printing.

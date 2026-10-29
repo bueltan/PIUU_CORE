@@ -17,6 +17,7 @@
 namespace {
 std::atomic<uint32_t> txOk{0},txUninit{0},txBusy{0},txBegin{0},txShort{0},txEnd{0};
 std::atomic<uint32_t> rxParseBusy{0},rxReadBusy{0},rxEmpty{0},rxPackets{0},rxBytes{0};
+std::atomic<uint32_t> rxPending{0},rxOversized{0},rxShort{0};
 }
 #define UDP_COUNT(counter) (++counter)
 #else
@@ -58,8 +59,8 @@ bool networkUdpSendRaw(const char *serverIp, uint16_t serverPort, const uint8_t 
 }
 
 /**
- * @brief Queries the next datagram size under udpMutex. Returns zero when no packet is available
- * or the lock cannot be acquired within 20 ms.
+ * @brief Returns unread buffered bytes before parsing another datagram. A failed
+ * read/lock acquisition leaves that datagram available for the next RX poll.
  */
 int networkUdpParsePacket()
 {
@@ -68,14 +69,19 @@ int networkUdpParsePacket()
 
     if (xSemaphoreTake(udpMutex, pdMS_TO_TICKS(20)) != pdTRUE) { UDP_COUNT(rxParseBusy);return 0; }
 
-    const int packetSize = udp.parsePacket();
+    // NetworkUDP::parsePacket() returns zero while its RX buffer is populated.
+    // In particular, read may have missed the mutex since the previous parse.
+    const int pending = udp.available();
+    const int packetSize = pending > 0 ? pending : udp.parsePacket();
+    if(pending > 0) UDP_COUNT(rxPending);
 
     xSemaphoreGive(udpMutex);
     return packetSize;
 }
 
 /**
- * @brief Reads up to bufferSize bytes unchanged; returns zero for no data or a locking failure.
+ * @brief Reads one whole datagram. Lock misses and zero-byte reads are retryable;
+ * oversized or partially consumed datagrams are discarded, including their tail.
  */
 int networkUdpRead(uint8_t *buffer, size_t bufferSize)
 {
@@ -84,7 +90,14 @@ int networkUdpRead(uint8_t *buffer, size_t bufferSize)
 
     if (xSemaphoreTake(udpMutex, pdMS_TO_TICKS(20)) != pdTRUE) { UDP_COUNT(rxReadBusy);return 0; }
 
+    const int expected = udp.available();
+    if(expected > 0 && size_t(expected) > bufferSize) {
+        udp.clear();xSemaphoreGive(udpMutex);UDP_COUNT(rxOversized);return 0;
+    }
     const int n = udp.read(buffer, bufferSize);
+    if(n > 0 && n != expected) {
+        udp.clear();xSemaphoreGive(udpMutex);UDP_COUNT(rxShort);return 0;
+    }
 
     xSemaphoreGive(udpMutex);
 
@@ -98,10 +111,11 @@ int networkUdpRead(uint8_t *buffer, size_t bufferSize)
 
 void networkUdpLogDiagnostics() {
 #if PIUU_NETWORK_DIAGNOSTICS
-    appLog().printf("[UDP_IO t=%lu] tx_ok=%lu tx_uninit=%lu tx_busy=%lu tx_begin_fail=%lu tx_short=%lu tx_end_fail=%lu rx_parse_busy=%lu rx_read_busy=%lu rx_empty=%lu rx_packets=%lu rx_bytes=%lu\n",
+    appLog().printf("[UDP_IO t=%lu] tx_ok=%lu tx_uninit=%lu tx_busy=%lu tx_begin_fail=%lu tx_short=%lu tx_end_fail=%lu rx_parse_busy=%lu rx_read_busy=%lu rx_empty=%lu rx_packets=%lu rx_bytes=%lu rx_pending=%lu rx_oversized=%lu rx_short=%lu\n",
         (unsigned long)millis(),(unsigned long)txOk.load(),(unsigned long)txUninit.load(),
         (unsigned long)txBusy.load(),(unsigned long)txBegin.load(),(unsigned long)txShort.load(),
         (unsigned long)txEnd.load(),(unsigned long)rxParseBusy.load(),(unsigned long)rxReadBusy.load(),
-        (unsigned long)rxEmpty.load(),(unsigned long)rxPackets.load(),(unsigned long)rxBytes.load());
+        (unsigned long)rxEmpty.load(),(unsigned long)rxPackets.load(),(unsigned long)rxBytes.load(),
+        (unsigned long)rxPending.load(),(unsigned long)rxOversized.load(),(unsigned long)rxShort.load());
 #endif
 }

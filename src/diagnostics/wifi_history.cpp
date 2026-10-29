@@ -48,7 +48,7 @@ void record(Event event, int32_t detail, uint32_t extra) {
     history.push({millis(), event, detail, extra});
 }
 bool next(uint64_t &cursor, char *line, size_t capacity, uint32_t &ms) {
-    // A full line must fit in one UDP log payload.
+    // A full line must fit in one diagnostic payload (UDP or EARS).
     if (!line || capacity < 192) return false;
     Entry entry{};
     uint64_t skipped = 0;

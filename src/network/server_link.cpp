@@ -5,6 +5,7 @@
 #include "protocol/server_protocol.h"
 #include "audio/audio_downlink.h"
 #include "app/conversation_event.h"
+#include "app/conversation.h"
 #include "config/app_config.h"
 #include "config/settings.h"
 #include <freertos/FreeRTOS.h>
@@ -79,6 +80,7 @@ bool serverLinkInit() {
         if(esp_read_mac(mac,ESP_MAC_WIFI_STA)!=ESP_OK) return false;
         client.setObserver(trace);
         if(!client.init(nonce?nonce:1,raw,mac)) return false;
+        client.setNotificationHandler(conversationStartNotification);
         client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;

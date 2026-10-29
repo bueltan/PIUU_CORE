@@ -7,6 +7,13 @@
 #include <type_traits>
 #include "hardware/app_log.h"
 #include "diagnostics/wifi_history.h"
+#if PIUU_WIFI_DIAGNOSTICS
+#include <esp_wifi.h>
+#include <esp_netif.h>
+#endif
+#if PIUU_EARS_LOG
+#include <esp_heap_caps.h>
+#endif
 
 namespace {
 struct WifiRequest { WifiOperation operation; char ssid[33]; char password[65]; };
@@ -14,6 +21,7 @@ static_assert(std::is_trivially_copyable<WifiRequest>::value, "Queue copies must
 static_assert(std::is_trivially_copyable<WifiResult>::value, "No Strings/pointers across tasks");
 QueueHandle_t requests = nullptr, results = nullptr;
 TaskHandle_t worker = nullptr;
+constexpr uint32_t ConnectTimeoutMs=60000; // Diagnostic trial: one uninterrupted attempt.
 bool busy = false; // Only controller reads/writes this; worker communicates via queues.
 
 // The worker owns explicit connect/scan jobs. Arduino may otherwise start a
@@ -35,6 +43,27 @@ bool stopAttempt() {
     return true;
 }
 
+#if PIUU_WIFI_DIAGNOSTICS
+void logConnectWait(uint32_t start,bool final) {
+    wifi_ap_record_t ap{};
+    const bool associated=esp_wifi_sta_get_ap_info(&ap)==ESP_OK;
+    esp_netif_dhcp_status_t dhcp=ESP_NETIF_DHCP_INIT;
+    esp_netif_ip_info_t ip{};
+    esp_netif_t *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    const esp_err_t dhcpError=netif?esp_netif_dhcpc_get_status(netif,&dhcp):ESP_ERR_INVALID_STATE;
+    const esp_err_t ipError=netif?esp_netif_get_ip_info(netif,&ip):ESP_ERR_INVALID_STATE;
+    const char *state=dhcpError!=ESP_OK?"unknown":
+        dhcp==ESP_NETIF_DHCP_STARTED?"started":dhcp==ESP_NETIF_DHCP_STOPPED?"stopped":"init";
+    const uint32_t address=ipError==ESP_OK?ip.ip.addr:0;
+    const uint32_t now=millis();
+    // Worker-side observation only: never restart DHCP/radio or log credentials.
+    appLog().printf("[WIFI_WAIT t=%lu] final=%d elapsed_ms=%lu status=%d assoc=%d rssi=%d dhcp=%s dhcp_err=%ld ip_err=%ld ip=%u.%u.%u.%u\n",
+        (unsigned long)now,final,(unsigned long)uint32_t(now-start),int(WiFi.status()),
+        associated,associated?int(ap.rssi):0,state,(long)dhcpError,(long)ipError,
+        unsigned(address&255),unsigned((address>>8)&255),unsigned((address>>16)&255),unsigned(address>>24));
+}
+#endif
+
 bool connect(const char *ssid, const char *password) {
     if (!ssid[0]) return false;
 #if PIUU_NETWORK_DIAGNOSTICS
@@ -53,8 +82,19 @@ bool connect(const char *ssid, const char *password) {
     const auto beginStatus = WiFi.begin(ssid, password);
     WifiDiagnostics::record(WifiDiagnostics::Event::BeginStatus, beginStatus);
     const uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && uint32_t(millis() - start) < 15000)
+#if PIUU_WIFI_DIAGNOSTICS
+    uint32_t lastWait=start;
+#endif
+    while (WiFi.status() != WL_CONNECTED && uint32_t(millis() - start) < ConnectTimeoutMs) {
+#if PIUU_WIFI_DIAGNOSTICS
+        const uint32_t now=millis();
+        if(uint32_t(now-lastWait)>=5000) { logConnectWait(start,false);lastWait=now; }
+#endif
         vTaskDelay(pdMS_TO_TICKS(50));
+    }
+#if PIUU_WIFI_DIAGNOSTICS
+    logConnectWait(start,true);
+#endif
 #if PIUU_NETWORK_DIAGNOSTICS
     appLog().printf("[WIFI_CONNECT t=%lu] phase=end connected=%d status=%d elapsed_ms=%lu\n",
         (unsigned long)millis(),WiFi.status()==WL_CONNECTED,int(WiFi.status()),
@@ -101,7 +141,21 @@ void run(void *) {
     for (;;) {
         WifiRequest request{};
         if (xQueueReceive(requests, &request, portMAX_DELAY) != pdTRUE) continue;
+#if PIUU_EARS_LOG
+        appLog().printf("[WIFI_JOB t=%lu] phase=start operation=%u status=%d internal=%u largest=%u stack=%u\n",
+            (unsigned long)millis(),unsigned(request.operation),int(WiFi.status()),
+            unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
+            unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
+            unsigned(uxTaskGetStackHighWaterMark(nullptr)));
+#endif
         const WifiResult result = runJob(request); // Reconnect policy restored before publication.
+#if PIUU_EARS_LOG
+        appLog().printf("[WIFI_JOB t=%lu] phase=end operation=%u success=%d status=%d internal=%u largest=%u stack=%u\n",
+            (unsigned long)millis(),unsigned(request.operation),result.success,int(WiFi.status()),
+            unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
+            unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
+            unsigned(uxTaskGetStackHighWaterMark(nullptr)));
+#endif
         xQueueSend(results, &result, portMAX_DELAY);
     }
 }

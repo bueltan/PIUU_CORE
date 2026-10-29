@@ -1,6 +1,29 @@
 # Changelog
 
+## 2026-10-29
+
+- Add optional negotiated CAP_NOTIFICATIONS=0x0010 / NOTICE=28 for idle-only backend reminders; CORE chooses the new conversation ID and sends a correlated START.
+- Reject foreign, unnegotiated, busy and duplicate notices; mute microphone input until reminder playback and abort an initial notification response wait after 20 seconds.
+- Pass CORE host tests and a Python NOTICE -> native CORE START wire interoperability check; compile cyd-uart0 successfully. Firmware deployment and real Calendar notification playback remain pending.
+
+- Extend the explicit WiFi connection wait from 15 to 60 seconds as a diagnostic trial, preserving a single begin and existing cancellation/auto-reconnect coordination.
+- With WiFi diagnostics enabled, log association, RSSI, ESP-NETIF DHCP status/IP and query errors every five seconds and before the final result; do not restart DHCP or change radio settings.
+- Test delayed 20-second success, bounded 60-second failure, no extra begin, DHCP observations and clock rollover; document CORE-only deployment and interpretation.
+
+- Add independent `PIUU_PLAYBACK_DIAGNOSTICS`: four loop-side summaries every five seconds, spaced by 100 ms, covering RX/decoding, jitter/END admission, playback phase/event delivery and output write duration/error/bytes.
+- Observe playback progress through fixed atomic counters, including an output call that has not returned; snapshot jitter with a zero-wait mutex and format after releasing it.
+- Add blocked-output/concurrent-observer, short/error write and clock-rollover probe tests; retain existing playback/recovery behavior and document interpretation and CORE-only update.
+
+- Route application logs through framed CORE→EARS UART→USB by default in UART0 environments; replace the UDP logger task/socket with a four-chunk static queue and existing UART worker.
+- Add CRC-protected diagnostic packets with boot ID, sequence, uptime, dropped bytes and reset reason; prioritize commands/RX and cap text at 4.8 kB/s.
+- Drain retained WiFi events without connectivity; report WiFi job memory/stack and periodic build/internal-memory status.
+- Add `capture_serial.py --only ears` and cross-firmware regressions for concurrent producers, saturation, CRC and continued audio control; document update order and RAM/panic limits.
+
 ## 2026-10-28
+
+- Retry an unread UDP datagram via `available()` after an RX mutex timeout or zero-byte read; prevent NetworkUDP's buffered-packet state from wedging future polling.
+- Discard oversized and partially read datagrams whole, including their tails, while keeping the existing mutex deadlines and allocation/task layout.
+- Add optional pending/oversized/short RX diagnostics and a concurrent sender regression that fails before the fix, with diagnostics both on and off.
 
 - Separate actual WiFi connectivity from queued connect/scan jobs; preserve active conversations and UDP identity during connected scans.
 - Pause Arduino auto-reconnect during explicit WiFi operations and restore its previous policy before publishing results.
@@ -9,7 +32,7 @@
 - Advertise the stable WiFi station MAC in HELLO (`CAP_DEVICE_MAC=0x0008`) while retaining independent session nonces; require backend confirmation.
 - Renew the session nonce after six seconds without server traffic even while idle, enabling recovery after a NAT address change.
 - Validate MAC negotiation, idle recovery and scan/conversation isolation with host and CORE/backend wire tests; compile `cyd-uart0` successfully.
-- Keep framework versions, RTOS task affinity and priorities unchanged. The UDP receive-lock failure remains a separate unresolved issue; these changes have not been flashed or validated on hardware in this chat.
+- Keep framework versions, RTOS task affinity and priorities unchanged. The UDP receive-lock failure is corrected above; hardware microcut validation remains pending.
 
 - Use provider inactivity for session closure; prevent ambient energy from renewing the deadline.
 - Bound stale speech events and test continuous-noise timeout recovery.

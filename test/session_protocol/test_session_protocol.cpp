@@ -20,7 +20,8 @@ int main(int argc,char **argv) {
     bytes[5]=25;assert(decode(bytes,41,decoded) && decoded.kind==Kind::Eyes);
     bytes[5]=26;assert(decode(bytes,41,decoded));
     bytes[5]=27;assert(decode(bytes,41,decoded));
-    bytes[5]=28;assert(!decode(bytes,41,decoded));bytes[5]=9;
+    bytes[5]=28;assert(decode(bytes,41,decoded) && decoded.kind==Kind::Notice);
+    bytes[5]=29;assert(!decode(bytes,41,decoded));bytes[5]=9;
     bytes[37]=2;assert(!decode(bytes,41,decoded));bytes[37]=3;
     auto other=p.id;++other.turn;assert(sameSession(p.id,other) && !sameTurn(p.id,other));
     ++other.server;assert(!sameSession(p.id,other));

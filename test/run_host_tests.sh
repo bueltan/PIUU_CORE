@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+bash test/run_ears_log_tests.sh
+
 task_test_dir=$(mktemp -d /tmp/piuu-host-tests.XXXXXX)
 trap 'rm -rf "$task_test_dir"' EXIT
 
@@ -22,6 +24,9 @@ g++ -std=c++11 -Wall -Wextra -I src test/downlink_recovery/test_recovery.cpp -o 
 
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_dac_trace.cpp -o "$task_test_dir/dac_trace"
 "$task_test_dir/dac_trace"
+
+g++ -std=c++11 -pthread -Wall -Wextra -I src test/diagnostics/test_audio_progress.cpp -o "$task_test_dir/audio_progress"
+"$task_test_dir/audio_progress"
 
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_metrics.cpp -o "$task_test_dir/metrics"
 "$task_test_dir/metrics"
@@ -55,7 +60,7 @@ g++ -std=c++11 -Wall -Wextra -I src test/silence/test_silence.cpp -o "$task_test
 g++ -std=c++11 -Wall -Wextra -I src test/touch/test_gesture.cpp -o "$task_test_dir/gesture"
 "$task_test_dir/gesture"
 
-g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/wifi/test_wifi.cpp test/services/mocks/runtime.cpp src/network/wifi_service.cpp src/diagnostics/wifi_history.cpp -o "$task_test_dir/wifi"
+g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_WIFI_DIAGNOSTICS=1 -I test/services/mocks -I src test/wifi/test_wifi.cpp test/services/mocks/runtime.cpp src/network/wifi_service.cpp src/diagnostics/wifi_history.cpp -o "$task_test_dir/wifi"
 "$task_test_dir/wifi"
 
 for wifi_diagnostics in 1 0; do
@@ -63,7 +68,7 @@ for wifi_diagnostics in 1 0; do
     "$task_test_dir/wifi_history"
 done
 
-g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../C3_EARS/src test/ears_protocol/test_ears_protocol.cpp src/protocol/ears_protocol.cpp ../C3_EARS/src/core_link.cpp ../C3_EARS/src/audio_protocol.cpp ../C3_EARS/src/ears_state.cpp -o "$task_test_dir/ears_protocol"
+g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../C3_EARS/src test/ears_protocol/test_ears_protocol.cpp src/protocol/ears_protocol.cpp ../C3_EARS/src/core_link.cpp ../C3_EARS/src/core_log_relay.cpp ../C3_EARS/src/audio_protocol.cpp ../C3_EARS/src/ears_state.cpp -o "$task_test_dir/ears_protocol"
 "$task_test_dir/ears_protocol"
 g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/ears_session/test_ears_session.cpp test/services/mocks/runtime.cpp src/app/ears_session.cpp src/app/conversation.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/ears_session"
 "$task_test_dir/ears_session"

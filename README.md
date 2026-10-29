@@ -1,5 +1,23 @@
 # PIUU_CORE
 
+## Avisos de Calendar desde el backend (2026-10-29)
+
+Nueva capacidad opcional UDP v3 `CAP_NOTIFICATIONS=0x0010` y paquete `NOTICE=28`.
+CORE puede aceptar una solicitud del backend cuando está inactivo y abrir una
+conversación con START correlacionado. El micrófono se silencia durante la apertura
+del recordatorio y retoma la escucha después de reproducirlo. Una conversación
+activa tiene prioridad y no es interrumpida. Los avisos duplicados, de otra sesión
+o sin capacidad negociada se ignoran; la espera de respuesta inicial tiene un
+límite de 20 segundos.
+
+Requiere el backend Calendar con avisos habilitados y cargar este firmware en CORE.
+La capacidad es opcional y no cambia las sesiones manuales. La planificación,
+consulta de Google y persistencia de avisos corresponden al backend. Ver
+[protocolo UDP v3](docs/PROTOCOLO_UDP_V3.md#avisos-proactivos-opcionales-2026-10-29)
+y [Calendar MCP del backend](../PIUU_SERVER/CALENDAR_MCP.md).
+Pasaron los tests host y la interoperabilidad Python/C++; `cyd-uart0` compiló
+correctamente. No se cargó firmware; falta la prueba de aviso real.
+
 ## Coordinación WiFi y recuperación del servidor (2026-10-28)
 
 La conectividad refleja el estado real del driver (`WL_CONNECTED`). Un trabajo
@@ -10,7 +28,7 @@ su tratamiento de cierre y nueva negociación.
 
 El worker serializa las operaciones explícitas, pausa la reconexión automática
 de Arduino mientras las ejecuta y restaura la política anterior al terminar.
-Cancela los intentos que superan 15 segundos; si falla la cancelación, no inicia
+Como prueba diagnóstica, espera hasta 60 segundos por intento; si falla la cancelación, no inicia
 otra conexión ni un escaneo que compita con el intento pendiente. Los errores de
 conexión muestran `Connection not established`, sin atribuirlos automáticamente
 a la contraseña. El framework, los núcleos y las prioridades RTOS no cambiaron.
@@ -37,17 +55,180 @@ bash test/run_host_tests.sh ../PIUU_SERVER
 pio run -e cyd-uart0
 ```
 
-No se cargó firmware en la placa ni se desplegó el backend durante este chat;
-falta validar reconexión WiFi y recuperación del enlace en hardware. El bloqueo
-de recepción UDP detectado cuando falla el mutex entre `parsePacket()` y `read()`
-sigue pendiente como corrección separada. La MAC no resuelve ese bloqueo ni
-confirma la causa de la pérdida inicial del servidor.
+La recepción UDP también corrige el bloqueo por contención descrito abajo.
+Falta validar estas correcciones con los microcortes WiFi reales: las pruebas
+host y la compilación no confirman la causa de la pérdida inicial del servidor.
+Esta revisión no carga automáticamente firmware ni despliega el backend.
 
-## CORE logs over LAN UDP (default for UART0 builds)
+## Recepción UDP después de un fallo temporal del mutex
 
-`cyd-uart0` and `cyd2usb-uart0` enable `PIUU_UDP_LOG=1` and disable SD.
-EARS firmware and the audio protocol are unchanged. Logs go directly to a PC on
-CORE's WiFi subnet, not to the voice backend. UART0 remains a binary EARS link.
+El socket de audio/control comparte un mutex entre TX y un único consumidor RX.
+`networkUdpParsePacket()` comprueba primero `udp.available()`: si la lectura
+anterior no consiguió el mutex o devolvió cero bytes, el mismo datagrama sigue
+pendiente y vuelve a anunciarse al consumidor. Esto evita el bloqueo de la
+biblioteca Arduino, cuyo `parsePacket()` devuelve cero mientras queda un buffer
+RX sin consumir. Los paquetes válidos se entregan completos y sin cambios.
+
+Un datagrama que supera el buffer del consumidor, o una lectura parcial que ya
+consumió bytes, se descarta entero con `udp.clear()` bajo el mismo mutex. Su cola
+no se interpreta como otro mensaje. Se conservan los límites actuales: TX no
+espera el mutex y cada operación RX espera como máximo 20 ms. No se añaden tareas,
+colas ni buffers; el formato UDP v3 y el backend no requieren cambios.
+
+Con `PIUU_NETWORK_DIAGNOSTICS=1`, `UDP_IO` incluye `rx_pending` (consultas que
+reutilizan un datagrama pendiente), `rx_oversized` y `rx_short` (descartes). Los
+contadores no son cantidad de frames de audio recuperados. Con diagnósticos
+apagados no se reservan esos contadores. El test host simula el comportamiento
+real de `NetworkUDP` y un TX concurrente que retiene el mutex entre parse y read;
+comprueba reintento, conservación de bytes/orden, lecturas cero y descarte de
+colas, con diagnósticos habilitados y deshabilitados.
+
+## Logs de CORE por EARS → USB (predeterminado en UART0)
+
+`cyd-uart0` y `cyd2usb-uart0` activan `PIUU_EARS_LOG=1`, con UDP y SD
+log desactivados. Actualizar **EARS primero**, usando `esp32-c3-ears`, y luego
+CORE. Se usa el cableado UART existente a 921600 baud; EARS expone los logs
+por su USB CDC nativo (`/dev/esp32-ears`, GPIO18/19), independiente de UART0
+GPIO6/7. No hace falta conectar el USB de CORE ni que funcione su WiFi.
+
+Desde PIUU_CORE, con el monitor serie de EARS cerrado:
+
+```bash
+/home/denis/.platformio/penv/bin/python tools/capture_serial.py --only ears
+```
+
+La captura imprime el directorio de salida y guarda `ears.log` con los mensajes
+de ambas placas y hora UTC de recepción. Ctrl+C cierra la captura. `--only ears`
+evita abrir CORE y KEYWORD; no envía comandos de mantenimiento ni secuencias de
+reset. Se conservan `--ears`, `--output` y la reconexión automática del puerto.
+Ejemplo del puente:
+
+```text
+[CORE boot=1234abcd seq=12 t=15000 reset=1 lost_bytes=0 usb_drop=0 bad_crc=0] [WIFI_HISTORY t=14980] event=disconnected reason=204 ...
+```
+
+Cada línea representa un fragmento de hasta 192 bytes, no necesariamente una
+línea completa original; saltos y controles se convierten en espacios. `boot`
+cambia en cada arranque, `seq` permite detectar huecos, `t` es el tiempo del
+registro en CORE, y `reset` es el valor numérico de `esp_reset_reason()` de ese
+arranque (por ejemplo 1=power-on, 3=software, 4=panic, 6=task watchdog,
+9=brownout). `lost_bytes` cuenta bytes descartados en CORE; `usb_drop` cuenta
+fragmentos descartados en EARS; `bad_crc` cuenta paquetes de diagnóstico
+inválidos. La primera secuencia recibida solo establece una referencia.
+
+El historial WiFi de 64 eventos se drena sin depender de la red, antes de los
+logs generales. Se mantienen callbacks sin formato ni I/O. `[WIFI_JOB]` registra
+inicio/fin de Scan/Connect, estado, resultado, memoria interna, mayor bloque
+libre y pila disponible del worker. `[CORE_LOG]`, cada cinco segundos, informa
+build, heap, memoria interna, mayor bloque y pila del dueño UART. Estado e IP
+se observan en los eventos WiFi; el transporte UART no consulta APIs de red.
+Los registros no incluyen contraseña ni SSID.
+
+CORE utiliza cuatro fragmentos estáticos (768 bytes de texto) y su tarea UART
+existente: sin tarea, socket ni cola dinámica adicionales. El dueño UART atiende
+comandos y RX antes de logs, reserva espacio para un comando y transmite como
+máximo 25 paquetes/s (4.8 kB/s de texto). EARS conserva ocho fragmentos, valida
+CRC y escribe solo si USB tiene espacio; el timeout USB de diagnóstico es cero.
+Las colas llenas descartan los fragmentos antiguos y cuentan pérdidas. Durante
+mantenimiento se suspende este puente y se restablece el timeout del transporte
+de programación; al salir vuelve a cero. No se cambia el formato PCM/EVT.
+
+Los logs ya guardados en la computadora sobreviven a un reinicio de CORE.
+Los pendientes en su RAM se pierden; EARS no persiste logs en flash. El canal
+transporta logs de aplicación y el motivo del nuevo arranque, **no** salida ROM
+ni el volcado completo de un panic. Si CORE se bloquea antes de transmitir,
+los últimos registros pueden perderse. No hay ACK ni retransmisión.
+
+Validación: `bash test/run_ears_log_tests.sh` prueba salida real del logger CORE
+contra el receptor EARS, fragmentación, CRC, colas llenas, productores concurrentes,
+USB sin espacio y continuidad de comandos. Compilaciones y pruebas host no
+sustituyen validar audio, corte WiFi, reconexión y reinicio en las placas.
+
+## Prueba de espera de IP: 60 segundos (2026-10-29)
+
+El worker de WiFi deja hasta **60000 ms desde que retorna `WiFi.begin`** para que
+el mismo intento obtenga IP, en lugar de 15000 ms. Esto aplica tanto al arranque
+como a Connect manual. No añade otro `WiFi.begin`, reconexiones automáticas de la
+aplicación ni reinicios de DHCP/radio. Al vencer mantiene la cancelación existente
+y restaura la política previa de auto-reconnect. La UI sigue ocupada durante la
+espera; no encadenar otro Scan/Connect hasta que termine. El plazo no incluye
+el tiempo de preparación/cancelación o bloqueo interno de llamadas al SDK.
+
+Con `PIUU_WIFI_DIAGNOSTICS=1`, `[WIFI_WAIT]` se emite desde el worker cada cinco
+segundos mientras espera y una vez al terminar (`final=1`), antes de cancelar si
+vence el plazo. Incluye:
+
+- `elapsed_ms`, `status` de Arduino y `assoc` obtenido del driver WiFi.
+- RSSI en dBm si está asociado (`rssi=0` cuando `assoc=0` no es una medición).
+- `dhcp=init|started|stopped|unknown` a partir de ESP-NETIF, más `dhcp_err`.
+- IP observada y `ip_err`; una consulta fallida se muestra como 0.0.0.0 y se
+  distingue de una IP aún no obtenida mediante el código de error.
+
+`dhcp=started` indica que el cliente está iniciado; **no** demuestra que haya
+recibido OFFER/ACK ni identifica por sí solo el paso exacto del intercambio DHCP.
+No se imprimen SSID ni contraseña. El transporte de logs sigue independiente del
+WiFi mediante EARS; no se agregan tareas ni colas a esta prueba.
+
+Cargar únicamente CORE (`cyd-uart0`), mantener la captura EARS, hacer
+Scan → misma red → Connect una vez y esperar su resultado hasta un minuto.
+Si obtiene IP después de 15 s sin otro intento, el plazo anterior era insuficiente
+para ese caso. Si a los 60 s sigue asociado sin IP, conservar la captura antes de
+reintentar y revisar el estado DHCP/router. Esta prueba no da por corregida la causa.
+
+Pruebas host: conexión a los 20 s sin segundo begin, cancelación a los 60 s,
+política de reconexión restaurada, observaciones DHCP y rollover de `millis()`.
+
+## Diagnóstico mínimo de reproducción (2026-10-29)
+
+`PIUU_PLAYBACK_DIAGNOSTICS=1` en `platformio.ini` añade cuatro líneas cada cinco
+segundos, separadas al menos 100 ms, por el sink de logs elegido. Es independiente
+de `PIUU_DIAGNOSTICS`, `PIUU_NETWORK_DIAGNOSTICS` y `PIUU_DAC_DIAGNOSTICS`; estos
+últimos pueden permanecer en cero. Solo requiere actualizar CORE; el puente EARS
+ya instalado reconoce estos fragmentos de texto. Capturar con `--only ears`.
+
+- `AUDIO_RX`: epochs solicitado/procesado, espera de respuesta, paquetes aceptados,
+  decodificados, errores, descartes y PLC. `rx_age_ms` viene del snapshot del buffer.
+- `AUDIO_BUFFER`: snapshot de secuencia esperada, mayor secuencia recibida, cola,
+  END aceptado y límite final, y rebuffer. `locked=0` indica que no se pudo obtener
+  el mutex inmediatamente: los campos del snapshot son inválidos, no ceros reales.
+  `snap_t` y `epoch` identifican cuándo y para qué respuesta se capturaron.
+- `AUDIO_WORKER`: fase (`idle`, `poll`, `flush`, `reset`, `jitter`, `pop`, `decode`,
+  `output`, `advance`, `finished`), antigüedad de fase/última vuelta/último avance
+  de secuencia y estimación de reproducción. `flags` contiene bits: 1=inicio
+  notificado, 2=reproducción terminada, 4=evento final notificado.
+- `AUDIO_WRITE`: llamadas **completadas** a `audioOutputWrite`, duración última/máxima
+  en microsegundos, último error y bytes aceptados frente a solicitados. Incluye
+  escalado de volumen y las escrituras I2S de esa llamada completa. END tiene
+  contadores `end_ok`/`end_reject`, última secuencia y epoch examinados por
+  `markEndPacket`; un END rechazado por filtros anteriores no llega a ese contador.
+
+Si `phase=output`, la edad y las vueltas dejan de avanzar y `calls` no aumenta,
+la llamada de salida aún no devolvió. `last_us`, `err` y `bytes` describen la última
+llamada terminada; `wanted` ya corresponde a la llamada en curso. `phase=decode`
+separa ese caso del decodificador. `end=1` confirma que el END entró en el buffer;
+`flags` permite distinguir terminar el audio de entregar el evento al controlador.
+Edades sin actividad previa se miden desde el arranque, no prueban un bloqueo.
+
+Los contadores RX/decodificación se reinician por respuesta; END, escrituras y
+máximo de duración se acumulan desde el arranque. Los campos atómicos se observan
+sin bloquear y pueden cambiar entre líneas; correlacionar por tiempo/epoch.
+El snapshot del buffer usa mutex sin espera y se libera antes de formatear.
+No se añaden tareas, colas, muestras PCM ni buffers de trazas. No imprime registros
+nuevos desde reproducción/RX ni cambia los plazos de I2S o la lógica de recuperación.
+Desactivar con `PIUU_PLAYBACK_DIAGNOSTICS=0` y recompilar.
+
+Prueba inicial: una conversación sin Scan/Connect; si queda en Playing, mantener
+la captura activa y revisar estos cuatro grupos. Después probar WiFi por separado.
+`test/diagnostics/test_audio_progress.cpp` verifica observación concurrente de una
+salida bloqueada, escrituras parciales/error y rollover de reloj.
+
+## CORE logs over LAN UDP (optional)
+
+
+For an optional UDP build, set `PIUU_EARS_LOG=0`, `PIUU_UDP_LOG=1` and
+`PIUU_SD_LOG=0` in the desired environment. The three sinks are mutually
+exclusive. Logs go directly to a PC on CORE's WiFi subnet, not to the voice
+backend. UART0 remains a binary EARS link.
 
 After loading CORE, find its WiFi IPv4 address in the router's client list or
 network UI. On a PC on the same subnet, run from the PIUU_CORE directory:
@@ -106,8 +287,8 @@ verified. Disable with `PIUU_UDP_LOG=0`; SD and UDP cannot be enabled together.
 En `platformio.ini`, `-DPIUU_WIFI_DIAGNOSTICS=1` activa un historial independiente
 de `PIUU_NETWORK_DIAGNOSTICS` y de la cola general de logs. Cambiarlo a `0` y
 recompilar elimina el buffer y el registro de eventos Wi-Fi. Para recibirlo por
-UDP se necesita un entorno con `PIUU_UDP_LOG=1`, como `cyd-uart0` o
-`cyd2usb-uart0`.
+EARS se usa `PIUU_EARS_LOG=1` (predeterminado en los entornos UART0). Para UDP
+se necesita `PIUU_UDP_LOG=1` y desactivar el sink EARS.
 
 El historial conserva los últimos 64 eventos en RAM (1024 bytes de registros,
 más mutex y contador), sin guardar SSID ni contraseñas. Registra intentos,
@@ -116,7 +297,7 @@ obtención/pérdida de IP, plazo de espera y escaneos. Se pierde al reiniciar;
 si se llena reemplaza los eventos más antiguos. El callback solo copia un
 registro bajo un mutex breve: no escribe logs ni realiza operaciones de red.
 
-Después de que CORE conecte, ejecutar el mismo colector:
+Para el sink UDP opcional, después de que CORE conecte, ejecutar el colector:
 
 ```bash
 python3 tools/capture_udp.py --host 192.168.1.123
@@ -159,7 +340,7 @@ identidad del enlace UDP. El worker pausa la reconexión automática de Arduino
 durante cada operación explícita y restaura la política anterior antes de
 publicar el resultado. Antes de escanear sin conexión cancela cualquier intento
 pendiente; una cancelación fallida impide iniciar otro escaneo o conexión.
-El intento conserva su plazo de 15 segundos y, al vencer, cancela la conexión
+El intento espera ahora hasta 60 segundos (prueba diagnóstica) y, al vencer, cancela la conexión
 pendiente para que no compita con el siguiente trabajo. No hay reintentos
 propios del worker. El ahorro de energía se desactiva antes de conectar.
 Un fallo genérico muestra `Connection not established`; usar el historial para

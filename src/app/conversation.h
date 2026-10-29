@@ -5,6 +5,8 @@
 bool conversationInit();
 ConversationState conversationState();
 bool conversationStart();
+// Idle-only proactive wake; microphone stays muted until reminder playback ends.
+bool conversationStartNotification();
 void conversationClose();
 void conversationAbort();
 void conversationPoll();

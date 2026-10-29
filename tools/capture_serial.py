@@ -83,8 +83,11 @@ def main():
     parser.add_argument("--keyword", default="/dev/esp32-keyword")
     parser.add_argument("--output", type=Path,
                         default=Path(__file__).resolve().parents[1] / "logs" / "integrated")
+    parser.add_argument("--only", nargs="+", choices=("core", "ears", "keyword"),
+                        default=("core", "keyword", "ears"),
+                        help="Capture selected consoles; use --only ears for CORE logs relayed over USB")
     args = parser.parse_args()
-    ports = [(name, getattr(args, name)) for name in ("core", "keyword", "ears")]
+    ports = [(name, getattr(args, name)) for name in dict.fromkeys(args.only)]
     resolved = [str(Path(port).resolve()) for _, port in ports]
     if len(set(resolved)) != len(resolved):
         parser.error("Cada placa necesita un puerto diferente")

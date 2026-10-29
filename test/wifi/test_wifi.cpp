@@ -72,6 +72,29 @@ int main() {
     WiFi.succeed=true;
     assert(wifiServiceRequestConnect({"open",""}));out=result();assert(out.success && std::string(out.password).empty());
     assert(WiFi.autoReconnect && WiFi.reconnectConflicts==0);
+    // Keep the same attempt alive beyond the old 15-second cancellation.
+    const auto beforeDelayed=WiFi.connections.size();
+    const int disconnectsBeforeDelayed=WiFi.disconnects;
+    const auto beforeDhcp=WiFi.dhcpReads;
+    WiFi.connectDelayMs=20000;
+    const uint32_t delayedStart=millis();
+    assert(wifiServiceRequestConnect({"delayed", "password"}));out=result();
+    assert(out.success && out.connected && uint32_t(millis()-delayedStart)>=20000);
+    assert(WiFi.connections.size()==beforeDelayed+1 && WiFi.disconnects==disconnectsBeforeDelayed+1);
+    assert(WiFi.dhcpReads>=beforeDhcp+4); // Waiting observations plus final state.
+    // A client that needs longer than the trial is cancelled at 60 s, not retried.
+    WiFi.connectDelayMs=61000;
+    const auto beforeTimeout=WiFi.connections.size();
+    const uint32_t timeoutStart=millis();
+    assert(wifiServiceRequestConnect({"too-slow", "password"}));out=result();
+    const uint32_t elapsed=millis()-timeoutStart;
+    assert(!out.success && !out.connected && !WiFi.pendingConnect);
+    assert(elapsed>=60000 && elapsed<61000 && WiFi.connections.size()==beforeTimeout+1);
+    assert(WiFi.autoReconnect && WiFi.reconnectConflicts==0);
+    // Same bounded wait works across millis() rollover.
+    now=UINT32_MAX-10000;WiFi.connectDelayMs=20000;
+    assert(wifiServiceRequestConnect({"rollover", "password"}));out=result();
+    assert(out.success && out.connected && millis()<20000);
     hostStopWorkers();
     puts("PASS: nonblocking WiFi jobs, serialization, copied credentials, bounded scans, connected scans without disconnect and failure recovery");
 }

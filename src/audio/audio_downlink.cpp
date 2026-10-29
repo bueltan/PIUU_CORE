@@ -1,6 +1,13 @@
 #include "audio/visual_clock.h"
 #include "diagnostics/config.h"
 #include "diagnostics/rx_service.h"
+#if PIUU_PLAYBACK_DIAGNOSTICS
+#include "diagnostics/audio_progress.h"
+static Diagnostics::AudioProgress audioProgress;
+#define AUDIO_PHASE(value) audioProgress.enter(Diagnostics::AudioProgress::value,millis())
+#else
+#define AUDIO_PHASE(value) ((void)0)
+#endif
 #include "diagnostics/dac_trace.h"
 #if PIUU_DAC_DIAGNOSTICS
 static Diagnostics::DacTrace dacTrace;
@@ -430,6 +437,10 @@ static bool markEndPacket(uint32_t seq, uint32_t packetEpoch)
         }
         xSemaphoreGive(jitterMutex);
     }
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    audioProgress.lastEnd=seq;audioProgress.lastEndEpoch=packetEpoch;
+    if(accepted)++audioProgress.endOk;else ++audioProgress.endReject;
+#endif
     return accepted;
 }
 
@@ -490,6 +501,10 @@ static void writeMedia(const int16_t *pcm,size_t samples) {
 #if PIUU_DAC_DIAGNOSTICS
     const uint32_t atMs=millis(),atUs=micros();
 #endif
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    audioProgress.beginWrite(millis(),uint32_t(samples*sizeof(int16_t)));
+    const uint32_t outputStartedUs=micros();
+#endif
     AudioOutputWriteResult result{};
     {
         Diagnostics::Measure measure(Diagnostics::Operation::OutputWrite);
@@ -497,6 +512,10 @@ static void writeMedia(const int16_t *pcm,size_t samples) {
     }
 #if PIUU_DAC_DIAGNOSTICS
     dacTrace.record(expectedSeq,atMs,uint32_t(micros()-atUs),result.error,result.bytes,pcm,samples);
+#endif
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    audioProgress.endWrite(uint32_t(micros()-outputStartedUs),result.error,uint32_t(result.bytes));
+    AUDIO_PHASE(Advance);
 #endif
     lastMediaWriteMs=millis();submittedMediaSamples.store(expectedSeq*320+uint32_t(samples));
     // Partial writes contribute only accepted samples. This estimates DAC progress,
@@ -516,6 +535,7 @@ static void writeSilenceFrame()
  */
 static int measuredDecode(OpusDecoder *decoder,const unsigned char *data,opus_int32 bytes,
                           opus_int16 *pcm,int samples,int fec) {
+    AUDIO_PHASE(Decode);
     Diagnostics::Measure measure(Diagnostics::Operation::Decode);
     return opus_decode(decoder,data,bytes,pcm,samples,fec);
 }
@@ -661,11 +681,17 @@ static void playbackTask(void *parameter)
     {
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(PLAYBACK_PERIOD_MS));
 
+#if PIUU_PLAYBACK_DIAGNOSTICS
+        audioProgress.tick(millis());
+        audioProgress.flags=uint32_t(startedReported) | (uint32_t(finished)<<1) | (uint32_t(finishReported)<<2);
+#endif
         const uint32_t requested = requestedEpoch.load();
         if (epoch != requested) {
+            AUDIO_PHASE(Flush);
             audioOutputFlush();
             submittedMediaSamples.store(0);
             visualClock={};publishVisualClock();
+            AUDIO_PHASE(Reset);
             resetStreamState();
             epoch = requested;
 #if PIUU_DAC_DIAGNOSTICS
@@ -674,8 +700,9 @@ static void playbackTask(void *parameter)
             startedReported = finished = finishReported = false;
             processedEpoch.store(epoch);
         }
-        if (!epoch) continue;
+        if (!epoch) { AUDIO_PHASE(Idle);continue; }
         if (finished) {
+            AUDIO_PHASE(Finished);
             if (!finishReported && eventSink && uint32_t(millis()-lastMediaWriteMs)>=128) finishReported = eventSink({epoch, PlaybackEventKind::Finished});
             continue;
         }
@@ -685,6 +712,7 @@ static void playbackTask(void *parameter)
         uint32_t minSeq = 0;
         bool foundMin = false;
         uint32_t nowMs = millis();
+        AUDIO_PHASE(Jitter);
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
         {
@@ -773,6 +801,7 @@ static void playbackTask(void *parameter)
             }
         }
 
+        AUDIO_PHASE(Pop);
         if (!popExpectedPacketLocked(playbackPkt))
         {
             const bool drainingEnd=seenEnd && expSeq<eSeq;
@@ -805,10 +834,13 @@ static void playbackTask(void *parameter)
                 continue;
 
             decodeAndWriteLossRecovery();
-
+            AUDIO_PHASE(Advance);
             if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
             {
                 expectedSeq++;
+#if PIUU_PLAYBACK_DIAGNOSTICS
+                audioProgress.advance(millis());
+#endif
                 xSemaphoreGive(jitterMutex);
             }
             continue;
@@ -840,9 +872,13 @@ static void playbackTask(void *parameter)
             decodedPackets++;
         }
 
+        AUDIO_PHASE(Advance);
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
         {
             expectedSeq++;
+#if PIUU_PLAYBACK_DIAGNOSTICS
+            audioProgress.advance(millis());
+#endif
             xSemaphoreGive(jitterMutex);
         }
     }
@@ -854,7 +890,66 @@ static void playbackTask(void *parameter)
  * @param parameter Unused FreeRTOS task argument.
  */
 
+#if PIUU_PLAYBACK_DIAGNOSTICS
+static void pollAudioProgress() {
+    static uint32_t reportAt=0,lineAt=0;
+    static unsigned line=4;
+    struct Snapshot {
+        uint32_t at=0,epoch=0,seq=0,high=0,queued=0,final=0,rxAge=0;
+        bool locked=false,end=false,rebuf=false;
+    };
+    static Snapshot snapshot;
+    const uint32_t now=millis();
+    if(uint32_t(now-reportAt)>=5000) {
+        reportAt=now;line=0;snapshot=Snapshot{};snapshot.at=now;
+        if(jitterMutex && xSemaphoreTake(jitterMutex,0)==pdTRUE) {
+            snapshot.locked=true;snapshot.epoch=processedEpoch.load();snapshot.seq=expectedSeq;snapshot.high=highestSeqSeen;
+            snapshot.queued=jitterBuffered;snapshot.final=endSeq;
+            snapshot.end=endSeen;snapshot.rebuf=rebuffering;
+            snapshot.rxAge=lastPacketMillis?Diagnostics::AudioProgress::age(now,lastPacketMillis):0;
+            xSemaphoreGive(jitterMutex);
+        }
+    }
+    if(line>=4 || uint32_t(now-lineAt)<100)return;
+    lineAt=now;
+    switch(line++) {
+    case 0:
+        appLog().printf("[AUDIO_RX t=%lu] req=%lu proc=%lu waiting=%d rx=%lu dec=%lu dec_err=%lu drop=%lu plc=%lu rx_age_ms=%lu\n",
+            (unsigned long)now,(unsigned long)requestedEpoch.load(),(unsigned long)processedEpoch.load(),
+            expectResponse.load(),(unsigned long)receivedPackets.load(),(unsigned long)decodedPackets.load(),
+            (unsigned long)decodeErrors.load(),(unsigned long)droppedPackets.load(),
+            (unsigned long)plcPackets.load(),(unsigned long)snapshot.rxAge);
+        break;
+    case 1:
+        appLog().printf("[AUDIO_BUFFER t=%lu] locked=%d snap_t=%lu epoch=%lu seq=%lu high=%lu queued=%lu end=%d final=%lu rebuf=%d\n",
+            (unsigned long)now,snapshot.locked,(unsigned long)snapshot.at,(unsigned long)snapshot.epoch,(unsigned long)snapshot.seq,
+            (unsigned long)snapshot.high,(unsigned long)snapshot.queued,snapshot.end,
+            (unsigned long)snapshot.final,snapshot.rebuf);
+        break;
+    case 2:
+        appLog().printf("[AUDIO_WORKER t=%lu] phase=%s phase_age_ms=%lu loops=%lu loop_age_ms=%lu progress_age_ms=%lu flags=%lu played_ms=%lu\n",
+            (unsigned long)now,Diagnostics::AudioProgress::name(audioProgress.phase.load()),
+            (unsigned long)Diagnostics::AudioProgress::age(now,audioProgress.phaseAt.load()),(unsigned long)audioProgress.loops.load(),
+            (unsigned long)Diagnostics::AudioProgress::age(now,audioProgress.loopAt.load()),
+            (unsigned long)Diagnostics::AudioProgress::age(now,audioProgress.advancedAt.load()),
+            (unsigned long)audioProgress.flags.load(),(unsigned long)audioDownlinkPlayedMs());
+        break;
+    case 3:
+        appLog().printf("[AUDIO_WRITE t=%lu] calls=%lu last_us=%lu max_us=%lu err=%ld bytes=%lu wanted=%lu end_ok=%lu end_reject=%lu last_end=%lu end_epoch=%lu\n",
+            (unsigned long)now,(unsigned long)audioProgress.writes.load(),(unsigned long)audioProgress.writeUs.load(),
+            (unsigned long)audioProgress.writeMaxUs.load(),(long)audioProgress.error.load(),
+            (unsigned long)audioProgress.bytes.load(),(unsigned long)audioProgress.wanted.load(),
+            (unsigned long)audioProgress.endOk.load(),(unsigned long)audioProgress.endReject.load(),
+            (unsigned long)audioProgress.lastEnd.load(),(unsigned long)audioProgress.lastEndEpoch.load());
+        break;
+    }
+}
+#endif
+
 void audioDownlinkPollDiagnostics() {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    pollAudioProgress();
+#endif
 #if PIUU_DAC_DIAGNOSTICS
     Diagnostics::DacTrace::Sample dacSample{};
     // One line per loop pass; playback never prints diagnostic dacSamples.

@@ -22,3 +22,12 @@ if len(sys.argv)>4:
     assert hello.identity.server==hello.identity.turn==hello.identity.response==0
     assert wire.encode(hello)==subprocess.check_output([sys.argv[4],'--hello'])
     print('PASS: real CORE HELLO MAC payload and Python capability/endian contract')
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        notice_path=Path(directory)/'notice.bin'
+        notice_path.write_bytes(wire.encode(wire.Packet(wire.Kind.NOTICE,0,wire.Identity(700,2,0,0),123)))
+        start=wire.decode(subprocess.check_output([sys.argv[4],'--notice',str(notice_path)]))
+        assert start.kind==wire.Kind.START and start.identity==wire.Identity(700,2,1,0)
+        assert int.from_bytes(start.body,'big')==123
+    print('PASS: Python NOTICE -> real CORE idle wake -> correlated START roundtrip')

@@ -2,10 +2,18 @@
 // Event logs and 5-second snapshots; independent of USB/UART log routing.
 #include "diagnostics/config.h"
 // Select exactly one asynchronous sink; UART0 otherwise stays silent.
-#if PIUU_SD_LOG && PIUU_UDP_LOG
-#error "Choose only one diagnostic sink: SD or UDP"
+#ifndef PIUU_EARS_LOG
+#define PIUU_EARS_LOG 0
 #endif
-#if PIUU_UDP_LOG
+#if (PIUU_SD_LOG + PIUU_UDP_LOG + PIUU_EARS_LOG) > 1
+#error "Choose only one diagnostic sink: SD, UDP or EARS"
+#endif
+#if PIUU_EARS_LOG
+#include "hardware/ears_log.h"
+#include <esp_log.h>
+inline EarsAppLog &appLog() { return earsAppLog(); }
+inline void appLogBegin() { esp_log_level_set("*", ESP_LOG_NONE);earsLogBegin(); }
+#elif PIUU_UDP_LOG
 #include "hardware/udp_log.h"
 #include <esp_log.h>
 inline UdpAppLog &appLog() { return udpAppLog(); }

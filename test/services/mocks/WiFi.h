@@ -26,6 +26,8 @@ public:
     std::atomic<bool> autoReconnect{true};
     bool modeOk=true, disconnectOk=true, pendingConnect=false;
     int reconnectConflicts=0;
+    uint32_t connectDelayMs=0,connectStartedMs=0;
+    unsigned dhcpReads=0;
     std::vector<std::pair<std::string,std::string>> connections;
     bool mode(int) { return modeOk; }
     bool getAutoReconnect() { return autoReconnect; }
@@ -42,11 +44,17 @@ public:
         if(autoReconnect || pendingConnect) ++reconnectConflicts;
         connections.emplace_back(ssid,password);cv.notify_all();
         cv.wait(lock,[this]{return !holdConnect;});
-        state=succeed ? WL_CONNECTED : WL_DISCONNECTED;
-        pendingConnect=!succeed;
+        connectStartedMs=millis();
+        state=succeed && !connectDelayMs ? WL_CONNECTED : WL_DISCONNECTED;
+        pendingConnect=state!=WL_CONNECTED;
         return state.load();
     }
-    int status() { return state.load(); }
+    int status() {
+        if(pendingConnect && succeed && connectDelayMs && uint32_t(millis()-connectStartedMs)>=connectDelayMs) {
+            state=WL_CONNECTED;pendingConnect=false;
+        }
+        return state.load();
+    }
     bool setSleep(bool value) { sleep=value;return true; }
     int scanNetworks(bool,bool) {
         ++scans;
