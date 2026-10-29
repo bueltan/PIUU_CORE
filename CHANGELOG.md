@@ -2,6 +2,10 @@
 
 ## 2026-10-29
 
+- Detect downlink recovery gaps using validated arrivals even when jitter admission rejects advanced frames; keep retransmission requests bounded by the current admission window.
+- Resynchronize blocked initial buffering/rebuffering after 400 ms without admitted audio when newer audio is beyond the window and no END is accepted. Playback owns cursor/decoder reset, discards the old queue and rejects frames behind the new cursor without changing session identity, buffer sizes or watchdog deadlines.
+- Add regression coverage for the captured 34/50-packet deadlock, bounded NACK discovery, grace/clock boundaries, normal playback and END safeguards, and burst-gap recovery through successful END completion. Document the audible-loss tradeoff, conditional resync log and existing UDP heartbeat; hardware validation remains pending.
+
 - Fix false playback stalls caused by sampling millis() before the jitter snapshot: freeze response expectation/activity and sample the clock last under the jitter mutex. Use the same local timing values for the completion decision and idle_ms diagnostics.
 - Add playback-local rollover-aware elapsed arithmetic that clamps a concurrently newer reference to zero; apply it to the stall watchdog and trailing-END recovery grace without changing configured deadlines or buffer sizes.
 - Add regressions for the observed 1–2 ms timestamp races, initial buffering, first-packet wait, rebuffering, real timeout/grace boundaries and rollover. Record option 4 (playback as sole owner of timing state, with bounded events from RX/controller) in README as a future alternative if similar coordination failures recur; it is not implemented by this fix.

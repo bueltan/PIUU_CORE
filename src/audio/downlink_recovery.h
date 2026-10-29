@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "audio/playback_timing.h"
 // Metadata only: PCM/Opus remain in the existing jitter slots. Owner polls under
 // jitterMutex, then sends outside it. One request per sequence, bounded scan/work.
 class DownlinkRecovery {
@@ -8,6 +9,17 @@ public:
     static constexpr uint32_t WINDOW=128, REORDER_MS=40, POLL_MS=20;
     static constexpr uint32_t MIN_LEAD_FRAMES=8, END_GRACE_MS=400;
     struct Request { uint32_t base;uint16_t mask; };
+    // Observe validated arrivals even when jitter admission rejects them. Never
+    // request outside the window that can currently accept retransmissions.
+    static uint32_t recoveryLimit(uint32_t expected,uint32_t observed,uint32_t maxAhead) {
+        if(observed<expected) return expected;
+        return expected+(observed-expected>maxAhead?maxAhead:observed-expected)+1;
+    }
+    static bool shouldResync(uint32_t expected,uint32_t observed,uint32_t maxAhead,
+                             bool blocked,bool end,uint32_t now,uint32_t lastActivity) {
+        return blocked && !end && observed>expected && observed-expected>maxAhead &&
+            PlaybackTiming::elapsed(now,lastActivity)>=END_GRACE_MS;
+    }
     void reset() { for(auto &s:slots) s.valid=false;polled=false;requests=frames=recovered=0; }
     template<class Present>
     bool poll(uint32_t now,uint32_t expected,uint32_t limit,bool advancing,Present present,Request &out) {

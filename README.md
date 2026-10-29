@@ -1,5 +1,35 @@
 # PIUU_CORE
 
+## Recuperación de audio ante microcortes de Wi-Fi (2026-10-29)
+
+Una captura mostró 34 paquetes en espera de los 50 necesarios para arrancar,
+mientras llegaban cientos de paquetes fuera de la ventana de admisión. La
+recuperación ahora observa también esas llegadas validadas para detectar huecos,
+pero solicita solamente secuencias que caben en la ventana actual. Los tamaños
+de búfer, los límites de retransmisión y el timeout de 10 segundos se conservan.
+
+Si reproducción está esperando llenar el búfer inicial o de rebuffer, no hay
+END aceptado, llega audio más de 100 secuencias por delante del cursor y pasan
+400 ms sin admitir paquetes, la tarea de reproducción descarta la cola antigua
+y resincroniza su cursor con la última secuencia observada. Reinicia el estado
+del decodificador y de recuperación, y espera audio nuevo para volver a llenar
+el búfer. Paquetes anteriores al nuevo cursor se rechazan incluso antes del
+primer arranque. La sesión y el epoch se conservan; se puede perder un fragmento
+de voz, pero una ráfaga perdida no obliga por sí sola a cerrar la respuesta.
+END sigue siendo necesario para declarar una terminación normal; si no llega
+audio recuperable ni END válido, permanece el cierre explícito por timeout.
+
+`PIUU_PLAYBACK_DIAGNOSTICS` controla el registro `[PLAYBACK] resync`, que incluye
+epoch, cursor anterior/nuevo, paquetes descartados y tiempo sin admisión. No se
+cambia Wi-Fi ni el protocolo del servidor. PING/PONG UDP ya está activo: CORE
+envía PING cada 3 segundos y cierra tras 6 segundos sin tráfico válido; es
+independiente de ICMP y de la habilitación de logs de red.
+
+Las pruebas host cubren huecos fuera de la ventana, límites de espera y reloj,
+ausencia de resincronización durante reproducción normal o con END aceptado,
+y un flujo con pérdida en ráfaga que vuelve a arrancar y termina mediante END.
+La validación en placa con microcortes reales sigue pendiente.
+
 ## Corrección del falso timeout de reproducción (2026-10-29)
 
 Las capturas de las 13:20:49 y 13:24:47 mostraron `playback_stalled` al iniciar

@@ -81,6 +81,7 @@ static bool resumeLogArmed = true;
 
 static uint32_t expectedSeq = 0;
 static uint32_t highestSeqSeen = 0;
+static uint32_t highestArrival = 0;
 static uint32_t endSeq = 0;
 static uint32_t endReceivedMs=0;
 static DownlinkRecovery recovery;
@@ -274,6 +275,7 @@ static void resetStreamState()
 
         expectedSeq = 0;
         highestSeqSeen = 0;
+        highestArrival = 0;
         endSeq = 0;
         endReceivedMs=0;
         consecutiveMisses = 0;
@@ -347,7 +349,7 @@ static bool peekPacketBySeqLocked(uint32_t seq, PacketSlot &out)
 
 /**
  * @brief Copies a size-valid Opus packet into a free slot under the mutex. Rejects duplicates
- * and, during playback, late or excessively advanced sequences.
+ * and sequences behind the playback/resynchronization cursor or too far ahead.
  */
 static bool insertPacketLocked(uint32_t seq,
                                uint32_t pts_samples,
@@ -376,11 +378,12 @@ static bool insertPacketLocked(uint32_t seq,
 #if PIUU_NETWORK_DIAGNOSTICS
         downlinkTrace.arrival(seq,millis());
 #endif
+        if(seq>highestArrival) highestArrival=seq;
         if (findSlotBySeqNoLock(seq) >= 0)
         {
             duplicatePackets++;
         }
-        else if (playbackStarted && seq < expectedSeq)
+        else if (seq < expectedSeq)
         {
             latePackets++;
         }
@@ -456,7 +459,8 @@ void audioDownlinkPollRecovery() {
         const uint32_t epoch=requestedEpoch.load();
         if(epoch==processedEpoch.load()) {
             if(recoveryEpoch!=epoch) { recovery.reset();recoveryEpoch=epoch; }
-            const uint32_t limit=endSeen?endSeq:(receivedPackets.load()?highestSeqSeen+1:0);
+            const uint32_t limit=endSeen?endSeq:((receivedPackets.load() || highestArrival)?
+                DownlinkRecovery::recoveryLimit(expectedSeq,highestArrival,MAX_AHEAD_WINDOW):0);
             uint32_t occupied[4]{};
             for(const auto &slot:jitter) if(slot.used && slot.seq>=expectedSeq) {
                 const uint32_t offset=slot.seq-expectedSeq;
@@ -723,6 +727,31 @@ static void playbackTask(void *parameter)
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
         {
+            const uint32_t activity=lastPacketMillis?lastPacketMillis:responseExpectedAt.load();
+            const uint32_t snapshotNow=millis();
+            const bool blocked=(rebuffering || !playbackStarted) &&
+                jitterBuffered<unsigned(playbackStarted?REBUFFER_PACKETS:START_BUFFERED_PACKETS);
+            if(expectResponse.load() && DownlinkRecovery::shouldResync(expectedSeq,highestArrival,
+                    MAX_AHEAD_WINDOW,blocked,endSeen,snapshotNow,activity)) {
+                const uint32_t previous=expectedSeq;
+                const uint32_t discarded=jitterBuffered;
+                // Playback owns the cursor and decoder. RX only publishes the
+                // observed horizon; epochs and the validated END remain intact.
+                for(auto &slot:jitter) slot.used=false;
+                jitterBuffered=0;
+                droppedPackets+=discarded;
+                expectedSeq=highestArrival;
+                highestSeqSeen=expectedSeq;
+                consecutiveMisses=0;
+                recovery.reset();recoveryEpoch=epoch;
+                resumeLogArmed=true;
+                resetDecoderState();
+#if PIUU_PLAYBACK_DIAGNOSTICS
+                appLog().printf("[PLAYBACK] resync epoch=%lu from=%lu to=%lu discarded=%lu idle_ms=%lu\n",
+                    (unsigned long)epoch,(unsigned long)previous,(unsigned long)expectedSeq,
+                    (unsigned long)discarded,(unsigned long)PlaybackTiming::elapsed(snapshotNow,activity));
+#endif
+            }
             started = playbackStarted;
             rebuf = rebuffering;
             seenEnd = endSeen;
