@@ -8,6 +8,7 @@ struct ConversationTransportPort {
     uint32_t (*playedMs)();
     bool (*interrupt)(uint32_t playedMs);
     void (*played)(uint32_t playedMs);
+    void (*playbackFaultDiagnostics)();
 };
 void conversationSetTransportPort(ConversationTransportPort);
 bool conversationInterrupt();

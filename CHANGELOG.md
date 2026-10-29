@@ -2,6 +2,10 @@
 
 ## 2026-10-29
 
+- Add bounded playback-stall evidence: prebuffer/jitter state, queue rejection counters, per-response transport admission reasons and the last coherent rejected media identity/sequence, without retaining payloads or changing playback behavior.
+- Capture transport evidence before conversation reset and drain three correlated fault records from the controller at least 100 ms apart; collect compact UDP I/O counters with playback-only diagnostics, independently of verbose network logs.
+- Pass the full host suite, including concurrent rejection snapshots, network/playback/off UDP diagnostics, real transport admission, pre-reset capture, paced fault output and stale failure suppression. Compile cyd-uart0 successfully; firmware upload and hardware reproduction remain pending. Update README with fields, interpretation and EARS capture command.
+
 - Add optional negotiated CAP_NOTIFICATIONS=0x0010 / NOTICE=28 for idle-only backend reminders; CORE chooses the new conversation ID and sends a correlated START.
 - Reject foreign, unnegotiated, busy and duplicate notices; mute microphone input until reminder playback and abort an initial notification response wait after 20 seconds.
 - Pass CORE host tests and a Python NOTICE -> native CORE START wire interoperability check; compile cyd-uart0 successfully. Firmware deployment and real Calendar notification playback remain pending.

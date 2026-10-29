@@ -1,5 +1,55 @@
 # PIUU_CORE
 
+## Diagnóstico de bloqueo de audio (2026-10-29)
+
+Con `PIUU_PLAYBACK_DIAGNOSTICS=1` (ya activado en `platformio.ini`), un fallo de
+reproducción conserva evidencia adicional sin habilitar los logs detallados de
+red. No cambia los timeouts, el buffer, la admisión de audio ni la recuperación.
+Requiere recompilar/cargar CORE; EARS y PIUU_SERVER no necesitan cambios para
+capturar estos registros.
+
+| Registro | Datos e interpretación |
+| --- | --- |
+| `[PLAYBACK] stalled` | Epoch, secuencia esperada, mayor secuencia admitida, paquetes en cola, mínimo necesario para iniciar/reanudar, estado de reproducción/rebuffer y END. Permite distinguir falta de prebuffer y un bloqueo después de comenzar. |
+| `AUDIO_QUEUE_FAULT` | Epoch solicitado/procesado y descartes por respuesta no esperada (`off`), cambio de epoch (`epoch_bad`), buffer lleno, datos malformados, duplicados, paquetes tardíos/adelantados y END rechazado. |
+| `MEDIA_PATH` | Turno/respuesta y contadores desde el último `ResponseStarted`: datagramas completos leídos (`wire`), encabezado inválido, cliente incorrecto, snapshot de identidad no disponible, medios aceptados y rechazos por flags, sesión, turno, respuesta, capacidad o payload. `accepted` incluye audio y END válidos a nivel de transporte; no demuestra entrada al jitter ni reproducción. |
+| `MEDIA_LAST` | Última secuencia aceptada, su antigüedad y muestra coherente del último rechazo: motivo, secuencia, turno/respuesta recibidos y esperados. Ignorar los campos del rechazo si `reject_valid=0`. |
+| `UDP_FAULT` | Totales de datagramas/bytes leídos, mutex ocupado al parsear/leer, datagramas pendientes, lecturas vacías, sobredimensionadas y parciales. Ayuda a separar pérdida de paquetes y problemas de servicio del socket. |
+
+`MEDIA_PATH` y `MEDIA_LAST` se capturan en el controlador **antes del reset de la
+conversación**. Junto con `UDP_FAULT`, se imprimen una línea por vez, separadas por
+al menos 100 ms; comparten un número `fault`. `t` en los dos primeros es la hora
+local de captura; en UDP es la de impresión. Los contadores de UDP son acumulados
+desde el arranque. En `AUDIO_QUEUE_FAULT`, `off`, `epoch_bad`, `full`, `malformed`
+y `end_reject` son acumulados desde el arranque; duplicados, tardíos y adelantados
+corresponden al stream actual. Las lecturas atómicas son observaciones cercanas,
+no una transacción que congele todos los workers.
+
+Ejemplo de interpretación para el fallo observado: si vuelve a quedar `seq=0`,
+`queued=4` y `dec=0`, comparar `needed`, `MEDIA_PATH` y `AUDIO_QUEUE_FAULT`. Si
+crecen `response_bad` o `session_bad`, hay rechazos por identidad; si los medios
+pasan el transporte pero crecen los descartes de epoch o buffer, investigar su
+admisión al jitter. Si no pasan más medios y tampoco crecen esos rechazos, revisar
+recepción UDP y los contadores/avance del RX worker. Ninguna de esas señales por
+sí sola confirma la causa del fallo.
+
+Los contadores usan memoria fija y operaciones atómicas; no guardan audio, correos,
+credenciales ni otros payloads. El RX worker solo cuenta y copia metadatos: no
+formatea logs por paquete. La salida depende del transporte de diagnóstico elegido;
+puede perderse si este se satura o CORE reinicia antes de terminar el informe.
+
+Capturar por EARS, con su monitor serie cerrado:
+
+```bash
+/home/denis/.platformio/penv/bin/python tools/capture_serial.py --only ears
+```
+
+Validación: suite host completa aprobada, razones de rechazo y muestras concurrentes,
+contadores UDP con diagnóstico de red/playback/apagado, captura previa al reset y
+salida espaciada con playback on/off, y callback de fallo ignorando eventos viejos.
+`cyd-uart0` compiló correctamente. No se cargó firmware; falta reproducir el fallo
+en hardware con esta instrumentación.
+
 ## Avisos de Calendar desde el backend (2026-10-29)
 
 Nueva capacidad opcional UDP v3 `CAP_NOTIFICATIONS=0x0010` y paquete `NOTICE=28`.

@@ -18,7 +18,19 @@ public:
 inline String operator+(const char *a, const String &b) { return String(a)+std::string(b); }
 template<class T> T constrain(T value, T lo, T hi) { return std::max(lo,std::min(hi,value)); }
 uint32_t millis();
+#ifdef PIUU_TEST_CAPTURE_LOG
+#include <cstdio>
+struct Logger {
+    std::string output;
+    void begin(uint32_t) {}
+    void println(const char *text) { output+=text;output+='\n'; }
+    template<class... Args> void printf(const char *format, Args... args) {
+        char buffer[2048];std::snprintf(buffer,sizeof(buffer),format,args...);output+=buffer;
+    }
+};
+#else
 struct Logger { void begin(uint32_t) {} void println(const char *) {} template<class... Args> void printf(const char *, Args...) {} };
+#endif
 #ifdef PIUU_TEST_SERIAL_UART
 #include "hardware_serial.h"
 extern HardwareSerial Serial;

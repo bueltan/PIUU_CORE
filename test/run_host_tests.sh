@@ -31,8 +31,14 @@ g++ -std=c++11 -pthread -Wall -Wextra -I src test/diagnostics/test_audio_progres
 g++ -std=c++11 -Wall -Wextra -I src test/diagnostics/test_metrics.cpp -o "$task_test_dir/metrics"
 "$task_test_dir/metrics"
 
-for network_diagnostics in 1 0; do
-    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_NETWORK_DIAGNOSTICS="$network_diagnostics" -I test/network_udp/mocks -I test/services/mocks -I src test/network_udp/test_network_udp.cpp src/network/network_udp.cpp -o "$task_test_dir/network_udp"
+g++ -std=c++11 -pthread -Wall -Wextra -I src test/diagnostics/test_media_rx.cpp src/protocol/session_protocol.cpp -o "$task_test_dir/media_rx"
+"$task_test_dir/media_rx"
+
+for diagnostic_mode in network playback off; do
+    network_diagnostics=0; playback_diagnostics=0
+    if [[ "$diagnostic_mode" == network ]]; then network_diagnostics=1; fi
+    if [[ "$diagnostic_mode" == playback ]]; then playback_diagnostics=1; fi
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_NETWORK_DIAGNOSTICS="$network_diagnostics" -DPIUU_PLAYBACK_DIAGNOSTICS="$playback_diagnostics" -I test/network_udp/mocks -I test/services/mocks -I src test/network_udp/test_network_udp.cpp src/network/network_udp.cpp -o "$task_test_dir/network_udp"
     "$task_test_dir/network_udp"
 done
 
@@ -40,8 +46,11 @@ g++ -std=c++11 -Wall -Wextra -I src src/protocol/server_protocol.cpp test/protoc
 "$task_test_dir/protocol" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin"
 g++ -std=c++11 -I test/uplink -I src src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp test/uplink/test_uplink.cpp -o "$task_test_dir/uplink"
 "$task_test_dir/uplink"
-g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/services/test_services.cpp src/app/app_services.cpp src/app/conversation.cpp src/network/server_link.cpp src/network/session_client.cpp src/protocol/session_protocol.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp src/ui/ui_status.cpp src/ui/ui_model.cpp test/services/mocks/runtime.cpp -o "$task_test_dir/services"
+for playback_fault_diagnostics in 0 1; do
+g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_TEST_CAPTURE_LOG -DPIUU_PLAYBACK_DIAGNOSTICS="$playback_fault_diagnostics" -I test/services/mocks -I src test/services/test_services.cpp src/app/app_services.cpp src/app/conversation.cpp src/network/server_link.cpp src/network/session_client.cpp src/protocol/session_protocol.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp src/ui/ui_status.cpp src/ui/ui_model.cpp test/services/mocks/runtime.cpp -o "$task_test_dir/services"
 "$task_test_dir/services"
+
+done
 
 g++ -std=c++11 -Wall -Wextra -I test/services/mocks -I src test/settings/test_settings.cpp src/config/settings.cpp src/storage/storage_prefs.cpp -o "$task_test_dir/settings"
 "$task_test_dir/settings"
@@ -70,8 +79,10 @@ done
 
 g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../C3_EARS/src test/ears_protocol/test_ears_protocol.cpp src/protocol/ears_protocol.cpp ../C3_EARS/src/core_link.cpp ../C3_EARS/src/core_log_relay.cpp ../C3_EARS/src/audio_protocol.cpp ../C3_EARS/src/ears_state.cpp -o "$task_test_dir/ears_protocol"
 "$task_test_dir/ears_protocol"
-g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/ears_session/test_ears_session.cpp test/services/mocks/runtime.cpp src/app/ears_session.cpp src/app/conversation.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/ears_session"
-"$task_test_dir/ears_session"
+for conversation_diagnostics in 0 1; do
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_DIAGNOSTICS="$conversation_diagnostics" -DPIUU_CONVERSATION_DIAGNOSTICS="$conversation_diagnostics" -I test/services/mocks -I src test/ears_session/test_ears_session.cpp test/services/mocks/runtime.cpp src/app/ears_session.cpp src/app/conversation.cpp src/audio/audio_uplink.cpp src/protocol/server_protocol.cpp -o "$task_test_dir/ears_session"
+    "$task_test_dir/ears_session"
+done
 
 g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_TEST_SERIAL_UART -DPIUU_EARS_UART0=1 -DPIUU_EARS_RX_PIN=3 -DPIUU_EARS_TX_PIN=1 -DPIUU_PERFORMANCE_DIAGNOSTICS=0 -DPIUU_UART_DIAGNOSTICS=0 -I test/ears_link/mocks -I test/services/mocks -I src test/ears_link/test_ears_link.cpp test/services/mocks/runtime.cpp src/input/ears_link.cpp src/protocol/ears_protocol.cpp -o "$task_test_dir/ears_uart0"
 "$task_test_dir/ears_uart0"

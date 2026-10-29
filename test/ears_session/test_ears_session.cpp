@@ -26,6 +26,7 @@ bool audioDownlinkEpochReady() { return true; }
 void audioDownlinkBeginTurn(uint32_t e) { epoch=e; }
 void audioDownlinkExpectResponse() {}
 void audioDownlinkLogDiagnostics() {}
+void audioDownlinkLogQueueFault() {}
 bool earsLinkBegin() { return true; }
 bool earsLinkPeerOnline() { return peer; }
 uint32_t earsLinkReceivedOrder() { return order; }
@@ -51,7 +52,8 @@ static void event(uint8_t code,std::vector<uint8_t> payload={}) {
     incoming.push_back(m);
 }
 static uint32_t be32(const uint8_t *p) { return uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3]; }
-static int cancels=0;
+static int cancels=0,faultReports=0;
+static void faultReport() { ++faultReports; }
 static bool beginTransport() { return true; }
 static void cancelTransport(uint32_t) { ++cancels; }
 static bool interruptTransport(uint32_t) { ++cancels;return true; }
@@ -90,7 +92,7 @@ int main() {
     const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();
     assert(sent.size()==whilePlaying && !keywords && conversationKeywordsMuted());
     event(3);earsSessionPoll();assert(conversationState()==ConversationState::Playing); // Late keyword cannot stop speaker playback.
-    conversationSetTransportPort({beginTransport,cancelTransport,nullptr,nullptr,interruptTransport,nullptr});
+    conversationSetTransportPort({beginTransport,cancelTransport,nullptr,nullptr,interruptTransport,nullptr,faultReport});
     const auto beforeInterrupt=sent.size();event(1);pcm(105);earsSessionPoll();
     assert(conversationState()==ConversationState::Playing && sent.size()==beforeInterrupt && cancels==0);
     assert(conversationInputMuted());
@@ -146,6 +148,12 @@ int main() {
     now+=340;earsSessionPoll();
     assert(earsSessionStats().pollGapMaxMs>=340);
 #endif
+    peer=true;assert(conversationStart());conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    const auto priorFaults=faultReports;
+    assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Failed}));conversationPoll();
+    assert(faultReports==priorFaults+1 && conversationState()==ConversationState::Idle);
+    assert(conversationPostPlaybackEvent({epoch-1,PlaybackEventKind::Failed}));conversationPoll();
+    assert(faultReports==priorFaults+1);
     hostStopWorkers();
     puts("PASS: touch/wake start, ordered PCM/STOP, stale input, sequence gaps/rollover, half-duplex PCM/wake guard and resume, offline/rejected wake and overflow");
 }

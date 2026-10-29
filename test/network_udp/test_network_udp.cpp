@@ -88,5 +88,12 @@ int main() {
 #else
     assert(Serial.output.empty());
 #endif
+    networkUdpLogPlaybackFault(7);
+#if PIUU_NETWORK_DIAGNOSTICS || PIUU_PLAYBACK_DIAGNOSTICS
+    for(const char *field: {"[UDP_FAULT", "fault=7 ", "parse_busy=1 ", "read_busy=1 ", "oversized=1 ", "short=1"})
+        assert(Serial.output.find(field)!=std::string::npos);
+#else
+    assert(Serial.output.empty());
+#endif
     puts("PASS: UDP mutex contention recovery, buffered/zero-byte retries, intact datagrams, oversize/short discard and I/O diagnostics");
 }

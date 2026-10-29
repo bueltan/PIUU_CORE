@@ -13,7 +13,7 @@
 #include <atomic>
 #include "hardware/app_log.h"
 
-#if PIUU_NETWORK_DIAGNOSTICS
+#if PIUU_NETWORK_DIAGNOSTICS || PIUU_PLAYBACK_DIAGNOSTICS
 namespace {
 std::atomic<uint32_t> txOk{0},txUninit{0},txBusy{0},txBegin{0},txShort{0},txEnd{0};
 std::atomic<uint32_t> rxParseBusy{0},rxReadBusy{0},rxEmpty{0},rxPackets{0},rxBytes{0};
@@ -103,7 +103,7 @@ int networkUdpRead(uint8_t *buffer, size_t bufferSize)
 
     if (n <= 0) { UDP_COUNT(rxEmpty);return 0; }
     UDP_COUNT(rxPackets);
-#if PIUU_NETWORK_DIAGNOSTICS
+#if PIUU_NETWORK_DIAGNOSTICS || PIUU_PLAYBACK_DIAGNOSTICS
     rxBytes.fetch_add(uint32_t(n));
 #endif
     return n;
@@ -117,5 +117,16 @@ void networkUdpLogDiagnostics() {
         (unsigned long)txEnd.load(),(unsigned long)rxParseBusy.load(),(unsigned long)rxReadBusy.load(),
         (unsigned long)rxEmpty.load(),(unsigned long)rxPackets.load(),(unsigned long)rxBytes.load(),
         (unsigned long)rxPending.load(),(unsigned long)rxOversized.load(),(unsigned long)rxShort.load());
+#endif
+}
+
+void networkUdpLogPlaybackFault(uint32_t fault) {
+#if PIUU_NETWORK_DIAGNOSTICS || PIUU_PLAYBACK_DIAGNOSTICS
+    appLog().printf("[UDP_FAULT t=%lu] fault=%lu packets=%lu bytes=%lu parse_busy=%lu read_busy=%lu pending=%lu empty=%lu oversized=%lu short=%lu\n",
+        (unsigned long)millis(),(unsigned long)fault,(unsigned long)rxPackets.load(),(unsigned long)rxBytes.load(),
+        (unsigned long)rxParseBusy.load(),(unsigned long)rxReadBusy.load(),(unsigned long)rxPending.load(),
+        (unsigned long)rxEmpty.load(),(unsigned long)rxOversized.load(),(unsigned long)rxShort.load());
+#else
+    (void)fault;
 #endif
 }

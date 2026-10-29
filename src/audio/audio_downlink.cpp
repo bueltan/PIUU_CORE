@@ -5,8 +5,10 @@
 #include "diagnostics/audio_progress.h"
 static Diagnostics::AudioProgress audioProgress;
 #define AUDIO_PHASE(value) audioProgress.enter(Diagnostics::AudioProgress::value,millis())
+#define AUDIO_REJECT(value) (++audioProgress.value)
 #else
 #define AUDIO_PHASE(value) ((void)0)
+#define AUDIO_REJECT(value) ((void)0)
 #endif
 #include "diagnostics/dac_trace.h"
 #if PIUU_DAC_DIAGNOSTICS
@@ -358,6 +360,7 @@ static bool insertPacketLocked(uint32_t seq,
 
     if (payload_len > ServerProtocol::MAX_OPUS_PAYLOAD)
     {
+        AUDIO_REJECT(queueMalformed);
         malformedPackets++;
         droppedPackets++;
         return false;
@@ -366,6 +369,7 @@ static bool insertPacketLocked(uint32_t seq,
     if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
     {
         if (!expectResponse.load() || packetEpoch != requestedEpoch.load() || processedEpoch.load() != packetEpoch) {
+            if(!expectResponse.load()) AUDIO_REJECT(queueOff);else AUDIO_REJECT(queueEpoch);
             xSemaphoreGive(jitterMutex);
             return false;
         }
@@ -390,6 +394,7 @@ static bool insertPacketLocked(uint32_t seq,
             int idx = findFreeSlotNoLock();
             if (idx < 0)
             {
+                AUDIO_REJECT(queueFull);
                 droppedPackets++;
                 xSemaphoreGive(jitterMutex);
                 return false;
@@ -587,9 +592,12 @@ static void decodeAndWriteLossRecovery()
  */
 static bool parseAndQueuePacket(const uint8_t *buf, size_t len, uint32_t packetEpoch)
 {
-    if (!expectResponse.load() || processedEpoch.load() != requestedEpoch.load()) return true;
+    if (!expectResponse.load() || processedEpoch.load() != requestedEpoch.load()) {
+        if(!expectResponse.load()) AUDIO_REJECT(queueOff);else AUDIO_REJECT(queueEpoch);
+        return true;
+    }
     ServerProtocol::OpusPacket packet{};
-    if (!ServerProtocol::decodeOpus(buf, len, packet)) return false;
+    if (!ServerProtocol::decodeOpus(buf, len, packet)) { AUDIO_REJECT(queueMalformed);return false; }
     // Valid transport traffic proves reachability even if jitter rejects its position.
     serverLinkObserveMedia();
     if (packet.end) {
@@ -748,8 +756,9 @@ static void playbackTask(void *parameter)
         if(completion==PlaybackCompletion::Stalled) {
             // Retry the failure event if its bounded queue is full. Never emit PLAYED.
             if(eventSink && eventSink({epoch,PlaybackEventKind::Failed})) {
-                appLog().printf("[PLAYBACK] stalled epoch=%lu seq=%lu end=%d idle_ms=%lu\n",
-                    (unsigned long)epoch,(unsigned long)expSeq,seenEnd,
+                appLog().printf("[PLAYBACK] stalled epoch=%lu seq=%lu high=%lu queued=%d needed=%d started=%d rebuf=%d end=%d final=%lu idle_ms=%lu\n",
+                    (unsigned long)epoch,(unsigned long)expSeq,(unsigned long)hiSeq,buffered,
+                    started?REBUFFER_PACKETS:START_BUFFERED_PACKETS,started,rebuf,seenEnd,(unsigned long)eSeq,
                     (unsigned long)(nowMs-(lastPktMs?lastPktMs:responseExpectedAt.load())));
                 finished=finishReported=true;expectResponse.store(false);
             }
@@ -1119,5 +1128,16 @@ bool audioDownlinkBufferStats(AudioBufferStats &stats) {
     xSemaphoreGive(jitterMutex);return true;
 #else
     (void)stats;return false;
+#endif
+}
+
+void audioDownlinkLogQueueFault() {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    appLog().printf("[AUDIO_QUEUE_FAULT t=%lu] req=%lu proc=%lu off=%lu epoch_bad=%lu full=%lu malformed=%lu dup=%lu late=%lu ahead=%lu end_reject=%lu\n",
+        (unsigned long)millis(),(unsigned long)requestedEpoch.load(),(unsigned long)processedEpoch.load(),
+        (unsigned long)audioProgress.queueOff.load(),(unsigned long)audioProgress.queueEpoch.load(),
+        (unsigned long)audioProgress.queueFull.load(),(unsigned long)audioProgress.queueMalformed.load(),
+        (unsigned long)duplicatePackets.load(),(unsigned long)latePackets.load(),(unsigned long)aheadDrops.load(),
+        (unsigned long)audioProgress.endReject.load());
 #endif
 }

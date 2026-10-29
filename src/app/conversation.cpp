@@ -119,6 +119,8 @@ void conversationPoll() {
     for (int i = 0; i < 8 && events && xQueueReceive(events, &event, 0) == pdTRUE; ++i)
         { const auto before=machine.state();
           if(event.epoch==machine.epoch() && event.kind==PlaybackEventKind::Failed) {
+              audioDownlinkLogQueueFault();
+              if(transport.playbackFaultDiagnostics) transport.playbackFaultDiagnostics();
               appLog().println("[CONV] playback_stalled; cancel conversation");conversationAbort();
           } else machine.playback(event);
           transition(before,"playback_event"); }

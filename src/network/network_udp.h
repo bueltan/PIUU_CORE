@@ -31,3 +31,6 @@ int networkUdpParsePacket();
 int networkUdpRead(uint8_t *buffer, size_t bufferSize);
 // Controller only; cumulative local I/O counters, no worker printing.
 void networkUdpLogDiagnostics();
+
+// One compact RX snapshot on playback failure; also works with playback-only diagnostics.
+void networkUdpLogPlaybackFault(uint32_t fault=0);

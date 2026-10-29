@@ -35,3 +35,6 @@ bool serverLinkRequestDownlink(uint32_t base,uint16_t mask);
 // Loop-only eye-plan negotiation and nonblocking receipt ACK.
 bool serverLinkEyesPlansEnabled();
 bool serverLinkAcknowledgeEyesPlan(SessionProtocol::Identity,uint32_t sequence);
+
+// Controller-only failure snapshot, called before resetting the conversation.
+void serverLinkLogPlaybackFault();

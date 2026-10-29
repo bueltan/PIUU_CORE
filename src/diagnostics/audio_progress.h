@@ -10,6 +10,7 @@ struct AudioProgress {
     std::atomic<uint32_t> flags{0},writes{0},writeAt{0},writeUs{0},writeMaxUs{0};
     std::atomic<uint32_t> bytes{0},wanted{0};
     std::atomic<int32_t> error{0};
+    std::atomic<uint32_t> queueOff{0},queueEpoch{0},queueFull{0},queueMalformed{0};
     std::atomic<uint32_t> endOk{0},endReject{0},lastEnd{0},lastEndEpoch{0};
     void enter(Phase next,uint32_t now) {
         phaseAt.store(now,std::memory_order_relaxed);phase.store(next,std::memory_order_relaxed);

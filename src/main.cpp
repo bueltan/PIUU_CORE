@@ -38,7 +38,7 @@ void setup() {
     audioVolumeSetPercent(settings().volumePercent);
     appLog().printf("[VOLUME] loaded percent=%u gain_q16=%ld\n",
         audioVolumePercent(), (long)audioVolumeGainQ16());
-    conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished});
+    conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished,serverLinkLogPlaybackFault});
     appServicesInit();
     eyesInit();
     uiControllerInit();

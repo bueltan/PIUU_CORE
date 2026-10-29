@@ -14,11 +14,32 @@
 #include <esp_mac.h>
 #include <atomic>
 #include <cstring>
+#include "diagnostics/media_rx.h"
+#if PIUU_PLAYBACK_DIAGNOSTICS
+static Diagnostics::MediaRx mediaRx;
+static std::atomic<uint32_t> wireRx{0},badEnvelope{0},clientReject{0},snapshotReject{0};
+// Controller-owned captured report. Print at most one line per 100 ms after failure.
+static struct {
+    SessionProtocol::Identity id{};
+    Diagnostics::MediaRx::Sample rejected;
+    uint32_t counts[Diagnostics::MediaRx::Count]{};
+    uint32_t sequence=0,at=0,lineAt=0,wire=0,envelope=0,client=0,snapshot=0,acceptedSeq=0,acceptedAt=0;
+    unsigned line=3;
+} playbackFault;
+static void pollPlaybackFault();
+static uint32_t mediaBaseline[Diagnostics::MediaRx::Count]{},wireBaseline=0,envelopeBaseline=0,clientBaseline=0,snapshotBaseline=0;
+#endif
 using namespace SessionProtocol;
 namespace {
 SessionClient client;
 ServerEyesSink eyesSink=nullptr;
 uint32_t handleEvent(SessionProtocol::Event event,uint32_t response,uint32_t utterance) {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    if(event==SessionProtocol::Event::ResponseStarted) {
+        for(unsigned i=0;i<Diagnostics::MediaRx::Count;++i) mediaBaseline[i]=mediaRx.count(Diagnostics::MediaRx::Reason(i));
+        wireBaseline=wireRx;envelopeBaseline=badEnvelope;clientBaseline=clientReject;snapshotBaseline=snapshotReject;
+    }
+#endif
     return conversationServerEvent(ConversationEvent(uint8_t(event)),response,utterance);
 }
 void trace(const char *event,Identity id,uint32_t a,uint32_t b) {
@@ -98,6 +119,9 @@ bool serverLinkPollHeartbeat(bool online) {
         if(event.kind==Kind::Opus) client.observeMedia(event.id,event.sequence);
         else client.receive({event.kind,event.flags,event.id,event.sequence,event.body,event.size},millis());
     client.poll(millis(),online && initialized);publish();
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    pollPlaybackFault();
+#endif
     if(online && initialized) audioDownlinkPollRecovery();
     return online && initialized && client.ready(millis());
 }
@@ -116,13 +140,41 @@ int serverLinkRead(uint8_t *data,size_t capacity) {
     uint8_t packet[MAX_PACKET];const int size=networkUdpRead(packet,sizeof(packet));
     Packet view{};Identity expected{};
     if(size<=0) return 0;
-    if(!decode(packet,size,view)) { ++invalidRx;return 0; }
-    if(!snapshot(expected) || view.id.client!=expected.client) { ++staleRx;return 0; }
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    ++wireRx;
+#endif
+    if(!decode(packet,size,view)) {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+        ++badEnvelope;
+#endif
+        ++invalidRx;return 0;
+    }
+    const bool haveSnapshot=snapshot(expected);
+    if(!haveSnapshot || view.id.client!=expected.client) {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+        if(haveSnapshot) ++clientReject;else ++snapshotReject;
+#endif
+        ++staleRx;return 0;
+    }
     if(view.kind==Kind::Opus || view.kind==Kind::AudioEnd) {
-        if(view.flags || !expected.turn || !sameTurn(view.id,expected) || view.id.response!=expected.response || view.size>capacity) { ++staleRx;return 0; }
+        const auto reason=Diagnostics::MediaRx::validate(view,expected,capacity);
+        if(reason!=Diagnostics::MediaRx::Accepted) {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+            mediaRx.record(reason,view,expected,millis());
+#endif
+            ++staleRx;return 0;
+        }
         ServerProtocol::OpusPacket inner{};
         if(!ServerProtocol::decodeOpus(view.body,view.size,inner) || inner.sequence!=view.sequence ||
-           (view.kind==Kind::AudioEnd && !inner.end) || (view.kind==Kind::Opus && inner.end)) { ++invalidRx;return 0; }
+           (view.kind==Kind::AudioEnd && !inner.end) || (view.kind==Kind::Opus && inner.end)) {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+            mediaRx.record(Diagnostics::MediaRx::Payload,view,expected,millis());
+#endif
+            ++invalidRx;return 0;
+        }
+#if PIUU_PLAYBACK_DIAGNOSTICS
+        mediaRx.record(Diagnostics::MediaRx::Accepted,view,expected,millis());
+#endif
         receivedMedia=view.id;memcpy(data,view.body,view.size);return view.size;
     }
     if(view.kind!=Kind::HelloAck && !sameSession(view.id,expected)) { ++staleRx;return 0; }
@@ -171,3 +223,42 @@ void serverLinkAcknowledgeEnd(uint32_t sequence) {
     // A dropped ACK is repaired by the server END retry, never a control-overflow abort.
     if(!controls || xQueueSend(controls,&marker,0)!=pdTRUE) ++controlDrops;
 }
+
+// Controller captures before conversation reset; formatting is drained by poll.
+void serverLinkLogPlaybackFault() {
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    using R=Diagnostics::MediaRx;
+    playbackFault.id=client.identity();playbackFault.rejected=mediaRx.rejected();
+    for(unsigned i=0;i<R::Count;++i) playbackFault.counts[i]=mediaRx.count(R::Reason(i))-mediaBaseline[i];
+    playbackFault.wire=wireRx.load()-wireBaseline;playbackFault.envelope=badEnvelope.load()-envelopeBaseline;
+    playbackFault.client=clientReject.load()-clientBaseline;playbackFault.snapshot=snapshotReject.load()-snapshotBaseline;
+    playbackFault.acceptedSeq=mediaRx.lastAcceptedSeq;playbackFault.acceptedAt=mediaRx.lastAcceptedAt;
+    uint32_t rejects=0;for(unsigned i=1;i<R::Count;++i) rejects+=playbackFault.counts[i];
+    if(!rejects) playbackFault.rejected.valid=false;
+    if(!playbackFault.counts[R::Accepted]) playbackFault.acceptedSeq=playbackFault.acceptedAt=0;
+    if(++playbackFault.sequence==0) ++playbackFault.sequence;
+    playbackFault.at=millis();playbackFault.lineAt=millis();playbackFault.line=0;
+#endif
+}
+#if PIUU_PLAYBACK_DIAGNOSTICS
+static void pollPlaybackFault() {
+    auto &f=playbackFault;
+    if(f.line>=3 || uint32_t(millis()-f.lineAt)<100) return;
+    f.lineAt=millis();using R=Diagnostics::MediaRx;
+    if(f.line==0) {
+        appLog().printf("[MEDIA_PATH t=%lu] fault=%lu turn=%lu resp=%lu wire=%lu envelope=%lu client=%lu snapshot=%lu accepted=%lu flags=%lu session_bad=%lu turn_bad=%lu response_bad=%lu capacity=%lu payload=%lu\n",
+            (unsigned long)f.at,(unsigned long)f.sequence,(unsigned long)f.id.turn,(unsigned long)f.id.response,
+            (unsigned long)f.wire,(unsigned long)f.envelope,(unsigned long)f.client,(unsigned long)f.snapshot,
+            (unsigned long)f.counts[R::Accepted],(unsigned long)f.counts[R::Flags],(unsigned long)f.counts[R::Session],
+            (unsigned long)f.counts[R::Turn],(unsigned long)f.counts[R::Response],(unsigned long)f.counts[R::Capacity],(unsigned long)f.counts[R::Payload]);
+    } else if(f.line==1) {
+        const auto &r=f.rejected;
+        appLog().printf("[MEDIA_LAST t=%lu] fault=%lu accept_seq=%lu accept_age_ms=%lu reject_valid=%d reason=%s seq=%lu got_turn=%lu got_resp=%lu want_turn=%lu want_resp=%lu reject_age_ms=%lu\n",
+            (unsigned long)f.at,(unsigned long)f.sequence,(unsigned long)f.acceptedSeq,
+            (unsigned long)(f.counts[R::Accepted]?uint32_t(f.at-f.acceptedAt):0),r.valid,
+            r.valid?R::name(r.reason):"none",(unsigned long)r.seq,(unsigned long)r.turn,(unsigned long)r.response,
+            (unsigned long)r.expectedTurn,(unsigned long)r.expectedResponse,(unsigned long)(r.valid?uint32_t(f.at-r.at):0));
+    } else networkUdpLogPlaybackFault(f.sequence);
+    ++f.line;
+}
+#endif

@@ -27,3 +27,6 @@ bool audioDownlinkEpochReady();
 
 // Controller polls recovery; no network send or logging in playback worker.
 void audioDownlinkPollRecovery();
+
+// Controller failure record before epoch reset; no jitter lock or worker formatting.
+void audioDownlinkLogQueueFault();

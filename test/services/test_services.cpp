@@ -27,6 +27,7 @@ bool audioDownlinkEpochReady() { return true; }
 void audioDownlinkBeginTurn(uint32_t value) { epoch=value; }
 void audioDownlinkExpectResponse() {}
 void audioDownlinkLogDiagnostics() {}
+void audioDownlinkLogQueueFault() {}
 static bool wifi=false,bindOk=false,audioOk=false,tasksOk=false;
 static int binds=0,inits=0,starts=0,draws=0,wifiDraws=0;
 static UiState drawn=UI_READY;
@@ -37,6 +38,8 @@ static bool wifiBusy=false;
 bool wifiServiceBusy() { return wifiBusy; }
 bool networkUdpInit(uint16_t) { ++binds; return bindOk; }
 void networkUdpLogDiagnostics() {}
+static unsigned udpFaultReports=0;
+void networkUdpLogPlaybackFault(uint32_t) { ++udpFaultReports; }
 bool networkUdpSendRaw(const char *,uint16_t,const uint8_t *p,size_t n) { sent.emplace_back(p,p+n); return true; }
 int networkUdpParsePacket() { return incoming.size(); }
 int networkUdpRead(uint8_t *p,size_t n) {
@@ -169,6 +172,42 @@ int main() {
     conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
     assert(sink({epoch,PlaybackEventKind::Failed}));conversationPoll();assert(conversationState()==ConversationState::Idle);
     conversationAbort();
+#ifdef PIUU_TEST_CAPTURE_LOG
+    // Exercise real media admission, captured pre-reset identity and paced drain.
+    pong();appServicesPoll();assert(serverLinkOpenConversation());
+    auto media=serverLinkIdentity();media.response=71;
+    uint8_t wire[1024],out[1024];const uint8_t responseStarted[]={3,0,0,0,1};
+    auto wireSize=SessionProtocol::encode(wire,sizeof wire,{SessionProtocol::Kind::Event,0,media,1,responseStarted,5});
+    incoming.assign(wire,wire+wireSize);serverLinkRead(out,sizeof out);serverLinkPollHeartbeat(true);
+    uint8_t opus[19]={'O','P','U','S',1,0,0,0,0,0,0,0,0,0,1,64,0,1,128};
+    const auto deliverMedia=[&](SessionProtocol::Identity identity,uint16_t flags) {
+        auto n=SessionProtocol::encode(wire,sizeof wire,{SessionProtocol::Kind::Opus,flags,identity,0,opus,sizeof opus});
+        incoming.assign(wire,wire+n);return serverLinkRead(out,sizeof out);
+    };
+    assert(deliverMedia(media,0)==19);
+    auto wrong=media;++wrong.response;assert(deliverMedia(wrong,0)==0);
+    assert(deliverMedia(media,1)==0);
+    Serial.output.clear();const auto priorReports=udpFaultReports;
+    serverLinkLogPlaybackFault();
+    // A later session reset must not rewrite the captured failed response.
+    serverLinkResetHeartbeat();
+    assert(Serial.output.find("[MEDIA_PATH")==std::string::npos);
+    now+=100;serverLinkPollHeartbeat(false);
+#if PIUU_PLAYBACK_DIAGNOSTICS
+    assert(Serial.output.find("resp=71 ")!=std::string::npos);
+    assert(Serial.output.find("accepted=1 flags=1 ")!=std::string::npos);
+    assert(Serial.output.find("response_bad=1 ")!=std::string::npos);
+    assert(Serial.output.find("[MEDIA_LAST")==std::string::npos);
+    now+=99;serverLinkPollHeartbeat(false);assert(Serial.output.find("[MEDIA_LAST")==std::string::npos);
+    now+=1;serverLinkPollHeartbeat(false);
+    assert(Serial.output.find("reason=flags ")!=std::string::npos);
+    assert(udpFaultReports==priorReports);
+    now+=100;serverLinkPollHeartbeat(false);assert(udpFaultReports==priorReports+1);
+    now+=1000;serverLinkPollHeartbeat(false);assert(udpFaultReports==priorReports+1);
+#else
+    assert(Serial.output.find("[MEDIA_PATH")==std::string::npos && udpFaultReports==priorReports);
+#endif
+#endif
     hostStopWorkers();
     puts("PASS: startup retry/idempotence, heartbeat/reconnect/rollover, UI isolation and conversation actions");
 }
