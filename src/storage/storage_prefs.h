@@ -10,3 +10,5 @@ bool storagePrefsLoadWifiPasswordForSsid(const String &ssid, String &password);
 
 bool storagePrefsRemoveWifiCredential(const String &ssid);
 bool storagePrefsClearWifi();
+
+bool storagePrefsSaveVolume(unsigned percent);

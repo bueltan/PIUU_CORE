@@ -49,7 +49,7 @@ int main() {
     linkSerial.inject(event(0x80,{0}));waitFor([]{return earsLinkPeerOnline();});
     EarsMessage m{};assert(!earsLinkTake(m)); // ACK is consumed by transport.
     assert(earsLinkRequestStreaming(true));waitFor([]{return linkSerial.output().size()>=16;});
-    auto bytes=linkSerial.output();assert(bytes[13]==1);
+    auto bytes=linkSerial.output();assert(bytes[13]==3);
     linkSerial.inject(event(1,{17}));linkSerial.inject(pcm(7));linkSerial.inject(event(42,{5}));
     waitFor([]{return earsLinkReceivedOrder()>=4;}); // ACK order=1, wake=2, PCM=3, extra=4
     waitFor([&]{return earsLinkTake(m);});assert(m.kind==EarsProtocol::Kind::Event && m.event.code==1);
@@ -129,6 +129,17 @@ int main() {
 #else
     assert(linkSerial.errorCallback==nullptr);
 #endif
+    // Keyword gating changes only the command mode; CORE streaming stays on.
+    auto sentBefore=earsLinkStats().commandsSent;
+    assert(earsLinkRequestKeywords(false) && earsLinkRequestStreaming(true));
+    waitFor([&]{return earsLinkStats().commandsSent>sentBefore;});
+    bytes=linkSerial.output();assert(bytes[bytes.size()-3]==1);
+    sentBefore=earsLinkStats().commandsSent;assert(earsLinkRequestKeywords(true));
+    waitFor([&]{return earsLinkStats().commandsSent>sentBefore;});
+    bytes=linkSerial.output();assert(bytes[bytes.size()-3]==3);
+    sentBefore=earsLinkStats().commandsSent;assert(earsLinkRequestStreaming(false));
+    waitFor([&]{return earsLinkStats().commandsSent>sentBefore;});
+    bytes=linkSerial.output();assert(bytes[bytes.size()-3]==2);
     hostStopWorkers();
     puts("PASS: EARS UART pin/baud setup, command refresh, ACK validation, ordered queues, saturation isolation and peer timeout");
 }

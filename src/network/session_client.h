@@ -18,7 +18,7 @@ public:
     struct Stats { uint32_t pcmSent=0,txFailed=0,nacks=0,retransmits=0,cacheMisses=0,retries=0,overwritten=0,retransmitFailed=0,cacheExpired=0,nackAgeMaxMs=0; };
     void setObserver(Observer value) { observer=value; }
     Stats stats() const { return counters; }
-    bool init(uint64_t client,Sender sender);
+    bool init(uint64_t client,Sender sender,const uint8_t *deviceMac=nullptr);
     void reset();
     bool ready(uint32_t now) const;
     bool reachable(uint32_t now) const;
@@ -42,6 +42,8 @@ private:
     struct Command { SessionProtocol::Kind kind;SessionProtocol::Identity id;uint32_t request;uint8_t body[8];uint16_t size;uint8_t attempts;uint32_t sent; };
     struct Frame { uint8_t body[658];uint16_t size;uint32_t sequence,time;bool valid,sent,retried,resend; };
     SessionProtocol::Identity id{};
+    uint8_t deviceMac[6]{};
+    bool hasDeviceMac=false;
     Sender sender=nullptr;
     Observer observer=nullptr;
     EventHandler eventHandler=nullptr;

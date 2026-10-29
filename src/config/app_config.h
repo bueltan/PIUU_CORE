@@ -91,7 +91,7 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 // - STATS_PERIOD_MS can be lowered while debugging and raised in normal use
 //   to reduce Serial noise.
 #ifndef CONVERSATION_IDLE_TIMEOUT_MS
-#define CONVERSATION_IDLE_TIMEOUT_MS 30000u
+#define CONVERSATION_IDLE_TIMEOUT_MS 10000u
 #endif
 
 #ifndef CONVERSATION_ACTIVITY_LEVEL

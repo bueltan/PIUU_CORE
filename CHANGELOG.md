@@ -2,6 +2,15 @@
 
 ## 2026-10-28
 
+- Separate actual WiFi connectivity from queued connect/scan jobs; preserve active conversations and UDP identity during connected scans.
+- Pause Arduino auto-reconnect during explicit WiFi operations and restore its previous policy before publishing results.
+- Cancel timed-out connection attempts before another job; stop a new connect/scan when cancellation fails.
+- Remove unconditional server-link resets after WiFi job completion and replace misleading password-error guidance.
+- Advertise the stable WiFi station MAC in HELLO (`CAP_DEVICE_MAC=0x0008`) while retaining independent session nonces; require backend confirmation.
+- Renew the session nonce after six seconds without server traffic even while idle, enabling recovery after a NAT address change.
+- Validate MAC negotiation, idle recovery and scan/conversation isolation with host and CORE/backend wire tests; compile `cyd-uart0` successfully.
+- Keep framework versions, RTOS task affinity and priorities unchanged. The UDP receive-lock failure remains a separate unresolved issue; these changes have not been flashed or validated on hardware in this chat.
+
 - Use provider inactivity for session closure; prevent ambient energy from renewing the deadline.
 - Bound stale speech events and test continuous-noise timeout recovery.
 

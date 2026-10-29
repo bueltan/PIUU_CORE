@@ -9,6 +9,7 @@
 namespace {
 uint32_t inputAfter=0,lastSequence=0,controlDrops=0;
 bool haveSequence=false,wakePending=false;
+bool keywordsEnabled=true;
 uint32_t wakeOrder=0,discardThrough=0;
 bool discardQueued=false;
 EarsExtraEventSink extraSink=nullptr;
@@ -21,11 +22,20 @@ bool start() {
     return earsLinkRequestStreaming(true);
 }
 void stop() { haveSequence=false;earsLinkRequestStreaming(false); }
+void syncKeywords() {
+    const bool enabled=!conversationKeywordsMuted();
+    if(enabled!=keywordsEnabled && earsLinkRequestKeywords(enabled)) {
+        keywordsEnabled=enabled;
+        appLog().printf("[KEYWORD_GATE] enabled=%d state=%u\n",enabled,unsigned(conversationState()));
+    }
+}
 void handleEvent(const EarsEvent &event) {
 #if PIUU_DIAGNOSTICS
     appLog().printf("[EARS_EVT t=%lu] code=%u order=%lu size=%u state=%u\n",
         (unsigned long)millis(),unsigned(event.code),(unsigned long)event.order,unsigned(event.size),unsigned(conversationState()));
 #endif
+    // Reject detections already in flight when speaker playback/echo began.
+    if(conversationKeywordsMuted()) return;
     if (event.code==uint8_t(EarsProtocol::Event::Wake)) {
         if(conversationInputMuted()) return; // Speaker audio must not wake/interrupt PIUU.
         if (conversationState()==ConversationState::Listening || conversationState()==ConversationState::Connecting) return; // Idempotent repeat, preserve turn sequence.
@@ -91,6 +101,7 @@ EarsSessionNotice earsSessionPoll() {
     if (conversationState()!=ConversationState::Idle && !earsLinkPeerOnline()) {
         appLog().println("[EARS] abort: peer_timeout");conversationAbort();notice=EarsSessionNotice::Offline;
     }
+    syncKeywords();
     EarsMessage message{};
     for (int i=0;i<8 && earsLinkTake(message);++i) {
         const uint32_t order=message.kind==EarsProtocol::Kind::Pcm ? message.audio.order : message.event.order;
@@ -98,5 +109,6 @@ EarsSessionNotice earsSessionPoll() {
         if (message.kind==EarsProtocol::Kind::Pcm) handleAudio(message.audio);
         else handleEvent(message.event);
     }
+    syncKeywords();
     return notice;
 }

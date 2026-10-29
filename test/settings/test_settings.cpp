@@ -14,6 +14,19 @@ int main() {
     assert(settingsLoad());assert(fakeNvs.opens==0);
     assert(settings().wifi.ssid=="legacy" && settings().wifi.password=="secret" && settings().server=="10.0.0.20");
     assert(settings().serverCount==3); // duplicates removed, compiled default retained
+    assert(settings().volumePercent==VolumeConfig::DefaultPercent);
+    assert(settingsSetVolume(0));assert(settingsLoad() && settings().volumePercent==0);
+    assert(settingsSetVolume(100));assert(settingsLoad() && settings().volumePercent==100);
+    assert(!settingsSetVolume(101) && settings().volumePercent==100);
+    fakeNvs.failWrites=true;
+    assert(!settingsSetVolume(35) && settings().volumePercent==100 && fakeNvs.opens==0);
+    fakeNvs.failWrites=false;
+    assert(settingsSetVolume(35));
+    fakeNvs.integers["volume_pct"]=-1;
+    assert(settingsLoad() && settings().volumePercent==VolumeConfig::DefaultPercent);
+    fakeNvs.integers["volume_pct"]=101;
+    assert(settingsLoad() && settings().volumePercent==VolumeConfig::DefaultPercent);
+    assert(settingsSetVolume(35));
     String password;
     assert(settingsWifiPassword("net-11",password) && password=="pass-11");
     WifiCredentials draft=settings().wifi;draft.password="edited";
@@ -51,6 +64,7 @@ int main() {
     assert(settingsClearWifi());assert(settings().wifi.ssid.empty() && settings().wifi.password.empty());
     assert(fakeNvs.integers["wifi_count"]==0 && settings().server==savedServer);
     assert(settingsLoad() && settings().wifi.ssid.empty() && settings().server==savedServer);
+    assert(settings().volumePercent==35); // WiFi/server edits preserve the independent volume key.
     fakeNvs.available=false;
     assert(!settingsLoad());assert(settings().server==SERVER_IP && settings().wifi.ssid.empty());
     assert(fakeNvs.opens==0);

@@ -41,6 +41,11 @@ g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/service
 g++ -std=c++11 -Wall -Wextra -I test/services/mocks -I src test/settings/test_settings.cpp src/config/settings.cpp src/storage/storage_prefs.cpp -o "$task_test_dir/settings"
 "$task_test_dir/settings"
 
+for dac_diagnostics in 0 1; do
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_DAC_DIAGNOSTICS="$dac_diagnostics" -I test/audio_output/mocks -I test/services/mocks -I src test/audio_output/test_audio_output.cpp src/audio/audio_output.cpp src/audio/volume_control.cpp -o "$task_test_dir/audio_output"
+    "$task_test_dir/audio_output"
+done
+
 g++ -std=c++11 -Wall -Wextra -I src test/playback/test_completion.cpp -o "$task_test_dir/completion"
 "$task_test_dir/completion"
 
@@ -50,8 +55,13 @@ g++ -std=c++11 -Wall -Wextra -I src test/silence/test_silence.cpp -o "$task_test
 g++ -std=c++11 -Wall -Wextra -I src test/touch/test_gesture.cpp -o "$task_test_dir/gesture"
 "$task_test_dir/gesture"
 
-g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/wifi/test_wifi.cpp test/services/mocks/runtime.cpp src/network/wifi_service.cpp -o "$task_test_dir/wifi"
+g++ -std=c++11 -pthread -Wall -Wextra -I test/services/mocks -I src test/wifi/test_wifi.cpp test/services/mocks/runtime.cpp src/network/wifi_service.cpp src/diagnostics/wifi_history.cpp -o "$task_test_dir/wifi"
 "$task_test_dir/wifi"
+
+for wifi_diagnostics in 1 0; do
+    g++ -std=c++11 -pthread -Wall -Wextra -DPIUU_WIFI_DIAGNOSTICS="$wifi_diagnostics" -I test/services/mocks -I src test/wifi/test_history.cpp src/diagnostics/wifi_history.cpp -o "$task_test_dir/wifi_history"
+    "$task_test_dir/wifi_history"
+done
 
 g++ -std=c++11 -pthread -Wall -Wextra -I ../C3_EARS/test/link_host -I src -I ../C3_EARS/src test/ears_protocol/test_ears_protocol.cpp src/protocol/ears_protocol.cpp ../C3_EARS/src/core_link.cpp ../C3_EARS/src/audio_protocol.cpp ../C3_EARS/src/ears_state.cpp -o "$task_test_dir/ears_protocol"
 "$task_test_dir/ears_protocol"
@@ -84,7 +94,7 @@ if [[ $# -gt 0 ]]; then
     python3 test/downlink_recovery/check_backend.py "$backend_root/src" "$task_test_dir/downlink-nack.bin" "$task_test_dir/downlink-end.bin"
     "$task_test_dir/downlink_wire" read "$task_test_dir/downlink-end.bin"
     python3 test/session_protocol/check_python_recovery.py "$task_test_dir/session_client" "$backend_root/src"
-    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/transport/protocols/conversation.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
+    python3 test/session_protocol/check_python_session.py "$backend_root/src/bridge/transport/protocols/conversation.py" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin" "$task_test_dir/session_client"
     "$task_test_dir/session_protocol" "$task_test_dir/core-envelope.bin" "$task_test_dir/server-envelope.bin"
     python3 test/protocol/check_python_bridge.py "$backend_main" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"
     "$task_test_dir/protocol" "$task_test_dir/pcm.bin" "$task_test_dir/end.bin" "$task_test_dir/opus.bin"

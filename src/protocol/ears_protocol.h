@@ -7,7 +7,7 @@ namespace EarsProtocol {
 constexpr uint8_t VERSION=1;
 constexpr size_t PCM_HEADER_BYTES=10, CONTROL_HEADER_BYTES=8, MAX_EVENT_BYTES=32;
 enum class Event : uint8_t { Wake=0x01, Lights=0x02, Stop=0x03, Mute=0x04, Eyes=0x05, StreamState=0x80 };
-enum class Command : uint8_t { Start=0x01, Stop=0x02 };
+enum class Command : uint8_t { Start=0x01, Stop=0x02, StartWithKeywords=0x03 };
 enum class Kind : uint8_t { Pcm, Event };
 struct PacketView {
     Kind kind;

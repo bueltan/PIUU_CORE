@@ -1,9 +1,11 @@
 #pragma once
 #include <Arduino.h>
+#include "config/volume_config.h"
 
 constexpr int MAX_SERVER_ENTRIES = 8;
 struct WifiCredentials { String ssid; String password; };
 struct DeviceSettings {
+    uint8_t volumePercent = VolumeConfig::DefaultPercent;
     WifiCredentials wifi;
     String server;
     int serverCount = 0;
@@ -12,6 +14,7 @@ struct DeviceSettings {
 // setup()/loop() own settings. Workers receive bounded value copies, never references.
 const DeviceSettings &settings();
 bool settingsLoad();
+bool settingsSetVolume(unsigned percent);
 bool settingsRememberWifi(const WifiCredentials &credentials);
 bool settingsWifiPassword(const String &ssid, String &password);
 bool settingsSelectServer(const String &address);

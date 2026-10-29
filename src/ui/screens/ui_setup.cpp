@@ -14,6 +14,7 @@
 static TFT_eSPI_Button btnWifi;
 static TFT_eSPI_Button btnServer;
 static TFT_eSPI_Button btnTouch;
+static TFT_eSPI_Button btnVolume;
 static TFT_eSPI_Button btnBack;
 
 /**
@@ -42,7 +43,7 @@ static void drawButtons()
 
     btnWifi.initButton(
         &tft,
-        85, 85,
+        85, 78,
         140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"WIFI",
@@ -50,7 +51,7 @@ static void drawButtons()
 
     btnServer.initButton(
         &tft,
-        235, 85,
+        235, 78,
         140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"SERVER",
@@ -58,15 +59,18 @@ static void drawButtons()
 
     btnTouch.initButton(
         &tft,
-        85, 155,
+        235, 138,
         140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"TOUCH",
         2);
 
+    btnVolume.initButton(&tft, 85, 138, 140, 48,
+        TFT_GREEN, TFT_BLACK, TFT_GREEN, (char *)"VOLUME", 2);
+
     btnBack.initButton(
         &tft,
-        235, 155,
+        160, 204,
         140, 48,
         TFT_GREEN, TFT_BLACK, TFT_GREEN,
         (char *)"BACK",
@@ -75,6 +79,7 @@ static void drawButtons()
     btnWifi.drawButton(false);
     btnServer.drawButton(false);
     btnTouch.drawButton(false);
+    btnVolume.drawButton(false);
     btnBack.drawButton(false);
 
     screenUnlock();
@@ -127,6 +132,11 @@ UiSetupAction uiSetupHandleTouch(uint16_t x, uint16_t y, TouchPhase phase)
         btnTouch.drawButton(phase == TouchPhase::Press);
         if (phase != TouchPhase::Release) return UI_SETUP_ACTION_NONE;
         return UI_SETUP_ACTION_TOUCH;
+    }
+
+    if (btnVolume.contains(x, y)) {
+        btnVolume.drawButton(phase == TouchPhase::Press);
+        return phase == TouchPhase::Release ? UI_SETUP_ACTION_VOLUME : UI_SETUP_ACTION_NONE;
     }
 
     if (btnBack.contains(x, y))

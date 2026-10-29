@@ -1,5 +1,48 @@
 # PIUU_CORE
 
+## Coordinación WiFi y recuperación del servidor (2026-10-28)
+
+La conectividad refleja el estado real del driver (`WL_CONNECTED`). Un trabajo
+WiFi pendiente no equivale a una desconexión: escanear estando conectado ya no
+aborta la conversación ni cambia la identidad UDP. Al terminar un escaneo tampoco
+se reinicia el enlace con el servidor. Una pérdida real de conectividad conserva
+su tratamiento de cierre y nueva negociación.
+
+El worker serializa las operaciones explícitas, pausa la reconexión automática
+de Arduino mientras las ejecuta y restaura la política anterior al terminar.
+Cancela los intentos que superan 15 segundos; si falla la cancelación, no inicia
+otra conexión ni un escaneo que compita con el intento pendiente. Los errores de
+conexión muestran `Connection not established`, sin atribuirlos automáticamente
+a la contraseña. El framework, los núcleos y las prioridades RTOS no cambiaron.
+
+El HELLO anuncia la MAC WiFi STA como identidad estable del dispositivo mediante
+`CAP_DEVICE_MAC=0x0008`, además del nonce variable de sesión. CORE exige que el
+backend confirme esa extensión. El mismo dispositivo puede recuperar el enlace
+cuando cambien la IP, el puerto NAT o la identidad de sesión; el backend cierra
+primero la conversación anterior. Recuperar el transporte no reanuda el historial:
+hace falta abrir otra conversación mediante wake/touch. Incluso estando inactivo,
+CORE renueva su nonce después de seis segundos sin tráfico válido del servidor.
+
+**Actualizar primero PIUU_SERVER y después CORE.** El backend asocia la primera
+MAC declarada durante la vida del proceso y rechaza otra MAC; no hay una clave
+compartida ni verificación criptográfica todavía. Ver el [contrato de identidad
+MAC](docs/PROTOCOLO_UDP_V3.md#identidad-estable-de-core-y-reconexión-udp).
+
+Validación realizada en este chat: pruebas host de CORE, interoperabilidad con
+PIUU_SERVER (incluido el HELLO real de C++ decodificado en Python) y compilación
+de `cyd-uart0`. Para repetir desde este directorio:
+
+```bash
+bash test/run_host_tests.sh ../PIUU_SERVER
+pio run -e cyd-uart0
+```
+
+No se cargó firmware en la placa ni se desplegó el backend durante este chat;
+falta validar reconexión WiFi y recuperación del enlace en hardware. El bloqueo
+de recepción UDP detectado cuando falla el mutex entre `parsePacket()` y `read()`
+sigue pendiente como corrección separada. La MAC no resuelve ese bloqueo ni
+confirma la causa de la pérdida inicial del servidor.
+
 ## CORE logs over LAN UDP (default for UART0 builds)
 
 `cyd-uart0` and `cyd2usb-uart0` enable `PIUU_UDP_LOG=1` and disable SD.
@@ -35,7 +78,7 @@ bytes (800 bytes of item storage plus FreeRTOS metadata); worker stack is 4096
 bytes, with additional network/library allocations. Overflow evicts old chunks;
 each producer call accepts at most 1024 bytes. Maximum transmission is 25 UDP
 datagrams/s, each at most 216 bytes including the diagnostic header (5.4 kB/s,
-excluding IP/WiFi overhead). No retransmissions are attempted. Without a
+excluding IP/WiFi overhead). General log chunks are not retried. Without a
 subscriber, only a bounded recent backlog is retained. SD allocates no resources
 when disabled. This reduces logger allocation versus SD but is not a hardware
 latency or memory guarantee.
@@ -58,20 +101,138 @@ replies, `[UART_ERR]`, `[UDP_LOG]` memory/headroom and drops; stop/restart the
 collector and disconnect/reconnect WiFi. Hardware coexistence remains to be
 verified. Disable with `PIUU_UDP_LOG=0`; SD and UDP cannot be enabled together.
 
+## Historial de conexión Wi-Fi
+
+En `platformio.ini`, `-DPIUU_WIFI_DIAGNOSTICS=1` activa un historial independiente
+de `PIUU_NETWORK_DIAGNOSTICS` y de la cola general de logs. Cambiarlo a `0` y
+recompilar elimina el buffer y el registro de eventos Wi-Fi. Para recibirlo por
+UDP se necesita un entorno con `PIUU_UDP_LOG=1`, como `cyd-uart0` o
+`cyd2usb-uart0`.
+
+El historial conserva los últimos 64 eventos en RAM (1024 bytes de registros,
+más mutex y contador), sin guardar SSID ni contraseñas. Registra intentos,
+estado inmediato de `WiFi.begin`, asociación, motivo numérico de desconexión,
+obtención/pérdida de IP, plazo de espera y escaneos. Se pierde al reiniciar;
+si se llena reemplaza los eventos más antiguos. El callback solo copia un
+registro bajo un mutex breve: no escribe logs ni realiza operaciones de red.
+
+Después de que CORE conecte, ejecutar el mismo colector:
+
+```bash
+python3 tools/capture_udp.py --host 192.168.1.123
+```
+
+La salida incluye líneas `[WIFI_HISTORY t=...]`, donde `t` es el tiempo del
+evento en milisegundos desde el arranque, aunque se reciba mucho después.
+Cada suscripción nueva reproduce el historial retenido y luego sigue los eventos
+nuevos; renovar la suscripción cada 3 segundos no repite lo anterior. Reiniciar
+el colector permite repetirlo después de que venza la sesión anterior (10 s).
+Se mantiene el límite global de 25 datagramas/s y el heartbeat UDP. El historial
+se envía directamente, antes que la cola general; los eventos permanecen en RAM
+tras enviarse. Un error local de envío vuelve a intentar el registro. UDP no
+confirma recepción: si un paquete se pierde en la red, hay que volver a
+suscribirse para reproducir el historial. `skipped` informa eventos reemplazados
+si el colector se atrasa; al comenzar se parte del más antiguo aún retenido.
+
+Interpretación de campos:
+
+- `associated channel=... authmode=...`: logró asociarse al router; todavía no
+  confirma que tenga IP.
+- `got_ip ip=...`: obtuvo IP. Si aparece después de `timeout`, la conexión
+  terminó después del plazo que espera la aplicación.
+- `disconnected reason=...`: motivo del driver ESP32. Códigos habituales:
+  `8` desconexión voluntaria (también la provoca el cambio de red),
+  `200` pérdida de beacons, `201` AP no encontrado, `202` fallo de autenticación,
+  `204` timeout del handshake, `210` sin AP con seguridad compatible,
+  `211` sin AP que cumpla el umbral de autenticación. El código orienta el
+  diagnóstico; por sí solo no demuestra que la contraseña sea incorrecta.
+- `ready` / `timeout`: `status` es el estado Arduino y `elapsed_ms` el tiempo
+  desde que retornó `WiFi.begin`.
+- `setup_failed step=...`: `1` modo STA, `2` desactivar ahorro de energía,
+  `3` desconexión previa. No son códigos de motivo de desconexión.
+- `scan_end networks=...`: cantidad de resultados; un valor negativo indica
+  que el escaneo no terminó con resultados válidos.
+
+El estado de conectividad depende del driver, no de que haya un trabajo WiFi
+pendiente. Un escaneo conectado conserva la asociación, la conversación y la
+identidad del enlace UDP. El worker pausa la reconexión automática de Arduino
+durante cada operación explícita y restaura la política anterior antes de
+publicar el resultado. Antes de escanear sin conexión cancela cualquier intento
+pendiente; una cancelación fallida impide iniciar otro escaneo o conexión.
+El intento conserva su plazo de 15 segundos y, al vencer, cancela la conexión
+pendiente para que no compita con el siguiente trabajo. No hay reintentos
+propios del worker. El ahorro de energía se desactiva antes de conectar.
+Un fallo genérico muestra `Connection not established`; usar el historial para
+distinguir asociación, autenticación y DHCP. La validación de esos pasos y la
+convivencia con audio requiere una prueba en la placa.
+
+## Volumen de reproducción (PCM5102)
+
+Abrir `SETUP → VOLUME`. Los botones `+` y `-` cambian el nivel de 0 a 100 en
+pasos de 5; `MUTE` lo lleva a cero y `UNMUTE` recupera el nivel anterior de la
+sesión. El ajuste se aplica a la reproducción que esté en curso. `BACK` guarda
+el valor en NVS (`volume_pct`) y vuelve a SETUP; si falla, muestra `Save failed`
+y permite reintentar. No se escribe flash en cada pulsación. El silencio también
+queda guardado al salir y se restaura tras reiniciar.
+
+Sin un valor guardado, se usa 20. Los porcentajes representan la posición del
+control, con una curva de ganancia en dB; no son un porcentaje lineal de amplitud:
+
+| Nivel | Ganancia aproximada | Atenuación |
+| --- | --- | --- |
+| 0 | 0 | Silencio digital |
+| 20 (inicial) | 0,00398 | −48 dB |
+| 50 | 0,03162 | −30 dB |
+| 100 | 1 | 0 dB, sin amplificación digital |
+
+El antiguo `volumeScale = 0.02f` equivalía a −34 dB. La multiplicación sí atenuaba
+el PCM, y no se encontró otra ruta que la omitiera. El nuevo valor inicial reduce
+la amplitud unas cinco veces más. No se puede atribuir todavía el volumen físico
+alto a una causa concreta: las pruebas digitales no miden la salida del DAC ni
+la amplificación posterior.
+
+La conversión de PCM firmado se aplica justo antes de `i2s_write`, con ganancia
+Q16 y una transición de 5 ms para reducir saltos al cambiar el nivel. No modifica
+el buffer del decodificador, no cambia el formato I2S ni los pines y no amplifica
+por encima de la señal original. El audio previamente encolado en DMA puede
+seguirse oyendo brevemente después del ajuste. La tarea principal publica la
+ganancia con un atómico y la tarea de reproducción mantiene la transición.
+
+El formato I2S de 16 bits coincide con los formatos admitidos por la familia
+[PCM510xA según Texas Instruments](https://www.ti.com/lit/ds/symlink/pcm5102a.pdf).
+Esa familia entrega una señal de línea (hasta 2,1 V RMS a escala completa); la
+etapa conectada después también influye en el volumen audible. La compatibilidad
+del cableado y la salida analógica deben verificarse en el módulo físico.
+
+Los cambios generan `[VOLUME] percent=... gain_q16=...` por el canal de logs
+habitual. Para inspeccionar las muestras enviadas al DAC, agregar temporalmente
+`-DPIUU_DAC_DIAGNOSTICS=1` a `build_flags` de `platformio.ini`. `[VOLUME_PCM]`
+registra tres bloques al comenzar y después de cada cambio observado: pico de
+entrada y de salida, ganancia, bytes aceptados y error I2S. Tras la transición,
+con volumen 0 el pico de salida debe ser 0. `DAC_WRITE` sigue mostrando las
+muestras anteriores al volumen; usar `VOLUME_PCM` para comprobar la atenuación.
+Desactivar los diagnósticos DAC elimina esos cálculos y mensajes por bloque.
+
+Las pruebas de host interceptan `i2s_write` para comprobar lo que recibe el
+driver: signos PCM16, mínimo negativo, extremos de volumen, silencio exacto,
+transiciones, entrada sin modificar y escrituras parciales/fallidas. También se
+verifican botones dentro de 320×240 y persistencia, valores inválidos y fallos de
+NVS. Falta escuchar y medir en el PCM5102 real.
+
 ## Conversation inactivity
 
-CORE closes a listening conversation after `CONVERSATION_IDLE_TIMEOUT_MS=30000`
+CORE closes a listening conversation after `CONVERSATION_IDLE_TIMEOUT_MS=10000`
 without provider-detected speech. The provider inactivity clock restarts on server
 conversation events and after reply playback/echo guard; local microphone energy
 cannot reset it. This prevents ambient noise from keeping the session open.
 Response waiting and playback are excluded from this timeout.
 
 While provider speech is active, qualified local activity keeps the session alive;
-30 seconds without it closes a stale speech event. A separate configurable
+10 seconds without it closes a stale speech event. A separate configurable
 `CONVERSATION_SPEECH_WATCHDOG_MS=120000` bounds a speech event without an end even
 if background energy persists. This also limits a single uninterrupted utterance
 to two minutes; increase it if longer monologues are required. If the provider
-misses a real speech-start event, CORE may close after 30 seconds despite local
+misses a real speech-start event, CORE may close after 10 seconds despite local
 voice. Backend VAD event delivery is therefore required for this policy.
 
 `CONVERSATION_ACTIVITY_LEVEL=600` measures mean absolute PCM16 amplitude, not RMS.
@@ -96,12 +257,60 @@ queue, task, dynamic allocation or audio processing buffer.
 CORE now runs half-duplex: from `ResponseStarted` until playback completes, it
 continues draining EARS UART but discards microphone PCM instead of sending it to
 the backend. It also ignores WAKE events during that interval, so the speaker
-cannot trigger WALLE or interrupt its own response. STOP and touch cancellation
-remain available. After playback completes, `CONVERSATION_ECHO_GUARD_MS` adds
+cannot trigger WALLE or interrupt its own response. Touch cancellation remains
+available; keyword STOP is accepted outside playback and its echo guard. After playback completes, `CONVERSATION_ECHO_GUARD_MS` adds
 250 ms before microphone forwarding resumes. This intentionally disables spoken
 barge-in while PIUU talks; it is not acoustic echo cancellation. Muted frames do
 not advance UDP PCM sequence/PTS and are never buffered for later transmission.
-EARS continues reading its microphone and feeding KEYWORD.
+EARS continues reading its microphone. KEYWORD routing is controlled separately,
+as described below.
+
+### KEYWORD durante la conversación
+
+**Cargar CORE y EARS actualizados juntos.** No cambia el modelo ni el firmware de
+C3_KEYWORD. EARS deja de elegir un único destino: envía el mismo frame a ambos
+UART cuando KEYWORD está habilitado durante una sesión.
+
+| Estado | PCM a CORE | PCM a KEYWORD |
+| --- | --- | --- |
+| Sin sesión | No | Sí |
+| Conectando / escuchando al usuario | Sí | Sí |
+| Esperando respuesta de la IA | Sí | Sí |
+| Reproduciendo voz de la IA | Sí | No |
+| Guarda de eco de 250 ms tras reproducir | Sí | No |
+| Escucha reanudada | Sí | Sí |
+
+La pausa de KEYWORD empieza al procesar el evento de inicio de reproducción del
+DAC, no al recibir `ResponseStarted`. El descarte de PCM hacia el backend conserva
+su política anterior: se activa antes, desde `ResponseStarted`. Ambos controles
+son independientes. El cierre/aborto de una sesión vuelve a la ruta KEYWORD.
+
+CORE publica la intención por UART y la reafirma periódicamente, como el estado
+de streaming. Los comandos v1 sin payload son `0x01` CORE solo (KEYWORD pausado),
+`0x02` KEYWORD solo (CORE apagado), y el nuevo `0x03` CORE + KEYWORD. El ACK
+`CORE_STREAM_STATE=0x80` conserva su byte 0/1 y confirma solo streaming a CORE.
+Un EARS anterior no conoce `0x03`; no usar CORE actualizado con ese firmware.
+EARS actualizado sí acepta los comandos anteriores.
+
+`[KEYWORD_GATE] enabled=0/1 state=...` registra los cambios de intención en CORE;
+`[EARS] CMD=... core=... keywords=...` muestra el enrutamiento aplicado por EARS.
+El cambio tiene la latencia del loop, UART y frame de audio; no es una señal
+eléctrica sincronizada con la primera muestra del DAC. KEYWORD puede terminar
+inferencia ya encolada al pausarse el PCM. CORE descarta eventos de detección
+recibidos durante reproducción/guarda; un WAKE repetido tampoco puede volver a
+habilitar la ruta pausada. Al reanudarse, el salto de secuencia permite al receptor
+KEYWORD detectar la discontinuidad con su mecanismo existente.
+
+Esto prepara el camino para una palabra de detención mientras la IA escucha o
+espera respuesta: el evento UART `STOP_WORD=0x03` ya cierra la sesión en CORE.
+No se agregó una palabra al modelo. Durante la voz de la IA se mantiene pausado
+el detector, por lo que no se ofrece interrupción por voz en ese intervalo.
+
+Pruebas: `bash test/run_host_tests.sh` en CORE y
+`bash test/run_audio_routing_tests.sh` en C3_EARS verifican gates, guarda de eco,
+STOP, eventos repetidos, comandos reales entre placas y envío de las mismas
+secuencias por ambas rutas. Falta medir en placa el tiempo de ambos envíos UART y
+la continuidad de inferencia/audio usando los diagnósticos existentes.
 
 SD logging is optional and disabled in both UART0 environments. To test it,
 set `PIUU_SD_LOG=1` and `PIUU_UDP_LOG=0`. Insert a FAT-formatted
@@ -201,7 +410,7 @@ y [refactor](REFACTOR.md) para la separación de responsabilidades.
 Actualizar CORE y backend juntos: **PIU3 / versión 3**. Wake o touch abre una
 conversación; el proveedor detecta los turnos. El envío del micrófono se suspende
 durante respuestas y se reanuda al terminar la reproducción y la guarda de eco. Touch cierra; wake durante respuesta se ignora para evitar activaciones por eco. CORE cierra
-tras 30 segundos de silencio esperando una nueva intervención; el backend
+tras 10 segundos de silencio esperando una nueva intervención; el backend
 cierra xAI inmediatamente, sin conservar una conexión idle cinco minutos.
 
 El estado Connecting permite distinguir la apertura de xAI de la escucha normal.

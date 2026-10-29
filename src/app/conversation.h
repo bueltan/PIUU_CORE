@@ -19,3 +19,7 @@ void conversationLogDiagnostics();
 
 // Main-loop only: discard microphone PCM and wake events during reply/echo tail.
 bool conversationInputMuted();
+
+// KEYWORD stays active during Listening/Connecting/WaitingResponse. Only actual
+// playback and its short echo guard suppress it; microphone gating is separate.
+bool conversationKeywordsMuted();

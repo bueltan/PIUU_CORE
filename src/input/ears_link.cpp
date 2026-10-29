@@ -123,7 +123,8 @@ void run(void*) {
         const uint32_t now=millis(),intent=request.load();
         if (intent!=applied || uint32_t(now-lastCommand)>=EarsConfig::COMMAND_REFRESH_MS) {
             uint8_t bytes[EarsProtocol::CONTROL_HEADER_BYTES];
-            const auto command=(intent&1) ? EarsProtocol::Command::Start : EarsProtocol::Command::Stop;
+            const auto command=!(intent&1) ? EarsProtocol::Command::Stop :
+                (intent&2) ? EarsProtocol::Command::Start : EarsProtocol::Command::StartWithKeywords;
             const size_t size=EarsProtocol::encodeCommand(bytes,sizeof(bytes),command);
             // TX buffer is larger than a command. Do not wait for a busy UART.
             if (serial.availableForWrite()>=int(size) && serial.write(bytes,size)==size) {
@@ -188,7 +189,14 @@ bool earsLinkRequestStreaming(bool enabled) {
     if (!worker) return false;
     // One atomic value carries both desired state and revision. Repeated calls
     // explicitly request a resend without mixing state/revision across cores.
-    const uint32_t old=request.load();request.store(((old+2)&~uint32_t(1)) | uint32_t(enabled));
+    const uint32_t old=request.load();request.store(((old+4)&~uint32_t(3)) | (old&2) | uint32_t(enabled));
+    return true;
+}
+bool earsLinkRequestKeywords(bool enabled) {
+    if (!worker) return false;
+    // One atomic snapshot: bit 0 streams CORE, bit 1 suppresses KEYWORD.
+    const uint32_t old=request.load();
+    request.store(((old+4)&~uint32_t(3)) | (old&1) | (enabled ? 0u : 2u));
     return true;
 }
 uint32_t earsLinkReceivedOrder() { return order.load(); }

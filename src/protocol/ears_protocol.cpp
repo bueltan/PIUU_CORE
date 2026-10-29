@@ -4,7 +4,7 @@ namespace EarsProtocol {
 static uint16_t le16(const uint8_t *p) { return uint16_t(p[0]) | uint16_t(p[1])<<8; }
 static uint32_t le32(const uint8_t *p) { return uint32_t(p[0]) | uint32_t(p[1])<<8 | uint32_t(p[2])<<16 | uint32_t(p[3])<<24; }
 size_t encodeCommand(uint8_t *out,size_t capacity,Command command) {
-    if (!out || capacity<CONTROL_HEADER_BYTES || (command!=Command::Start && command!=Command::Stop)) return 0;
+    if (!out || capacity<CONTROL_HEADER_BYTES || (command!=Command::Start && command!=Command::Stop && command!=Command::StartWithKeywords)) return 0;
     memcpy(out,"CMD!",4);out[4]=VERSION;out[5]=uint8_t(command);out[6]=out[7]=0;
     return CONTROL_HEADER_BYTES;
 }

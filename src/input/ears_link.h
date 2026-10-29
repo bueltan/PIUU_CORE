@@ -15,6 +15,8 @@ bool earsLinkBegin();
 using EarsEyesSink=void(*)(const uint8_t*,size_t);
 void earsLinkSetEyesSink(EarsEyesSink);
 bool earsLinkRequestStreaming(bool enabled);
+// Independent of CORE PCM streaming; reapplied with the regular command refresh.
+bool earsLinkRequestKeywords(bool enabled);
 bool earsLinkTake(EarsMessage &message);
 uint32_t earsLinkReceivedOrder();
 bool earsLinkPeerOnline();

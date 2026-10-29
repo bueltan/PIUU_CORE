@@ -14,7 +14,7 @@
 #include <cstdio>
 Logger Serial;
 static uint32_t now=1000,order=0,epoch=0,drops=0;
-static bool peer=false,wifi=true,server=true,ready=true,streaming=false;
+static bool peer=false,wifi=true,server=true,ready=true,streaming=false,keywords=true;
 static std::deque<EarsMessage> incoming;
 static std::vector<bool> commands;
 static std::vector<std::vector<uint8_t>> sent;
@@ -29,6 +29,7 @@ void audioDownlinkLogDiagnostics() {}
 bool earsLinkBegin() { return true; }
 bool earsLinkPeerOnline() { return peer; }
 uint32_t earsLinkReceivedOrder() { return order; }
+bool earsLinkRequestKeywords(bool value) { keywords=value;return true; }
 bool earsLinkRequestStreaming(bool value) { streaming=value;commands.push_back(value);return true; }
 EarsLinkStats earsLinkStats() { return {0,0,drops,0,0,streaming}; }
 bool earsLinkTake(EarsMessage &message) { if(incoming.empty()) return false;message=incoming.front();incoming.pop_front();return true; }
@@ -76,7 +77,8 @@ int main() {
     event(1);pcm(103);event(42,{1,2,3});earsSessionSetExtraEventSink(extra);earsSessionPoll();
     assert(extras==1 && be32(sent.back().data()+6)==3); // repeated wake must not reset input
     finishInput();
-    assert(conversationInputMuted());
+    assert(conversationInputMuted() && !conversationKeywordsMuted());
+    earsSessionPoll();assert(keywords); // Waiting for a response must not pause KEYWORD.
     now+=31000;conversationPoll();
     assert(conversationState()==ConversationState::WaitingResponse);
     assert(conversationPostPlaybackEvent({epoch-1,PlaybackEventKind::Finished}));conversationPoll();
@@ -85,7 +87,9 @@ int main() {
     assert(conversationState()==ConversationState::Playing && streaming);
     now+=31000;conversationPoll();
     assert(conversationState()==ConversationState::Playing && streaming);
-    const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();assert(sent.size()==whilePlaying);
+    const auto whilePlaying=sent.size();pcm(104);earsSessionPoll();
+    assert(sent.size()==whilePlaying && !keywords && conversationKeywordsMuted());
+    event(3);earsSessionPoll();assert(conversationState()==ConversationState::Playing); // Late keyword cannot stop speaker playback.
     conversationSetTransportPort({beginTransport,cancelTransport,nullptr,nullptr,interruptTransport,nullptr});
     const auto beforeInterrupt=sent.size();event(1);pcm(105);earsSessionPoll();
     assert(conversationState()==ConversationState::Playing && sent.size()==beforeInterrupt && cancels==0);
@@ -95,7 +99,9 @@ int main() {
     assert(conversationState()==ConversationState::Listening && streaming);
     assert(conversationInputMuted());
     pcm(106);earsSessionPoll();assert(sent.size()==beforeInterrupt);
-    now+=251;conversationPoll();assert(!conversationInputMuted());
+    earsSessionPoll();assert(!keywords && conversationKeywordsMuted());
+    now+=249;conversationPoll();earsSessionPoll();assert(!keywords);
+    now+=2;conversationPoll();earsSessionPoll();assert(!conversationInputMuted() && keywords);
     pcm(107);earsSessionPoll();assert(sent.size()==beforeInterrupt+1);
     assert(be32(sent.back().data()+6)==4); // Muting introduces no artificial UDP sequence gap.
     now+=29000;
@@ -110,6 +116,10 @@ int main() {
     assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
     for(unsigned i=0;i<1501;++i) { now+=20;pcm(2000+i,1200);earsSessionPoll();conversationPoll(); }
     assert(conversationState()==ConversationState::Idle && !streaming);
+    // Stop already has a route during an active listening session, ready for a future model label.
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    earsSessionPoll();assert(keywords);
+    event(3);earsSessionPoll();assert(conversationState()==ConversationState::Idle && !streaming && keywords);
     // A stuck provider event with continuous energy is bounded by its watchdog.
     assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
     conversationServerEvent(ConversationEvent::SpeechStarted,0,3);

@@ -94,6 +94,18 @@ int main() {
     serialData[0].rx.insert(serialData[0].rx.end(),command,command+8);coreLinkProcessRx();
     assert(!earsIsStreamingToCore());feed(parser,serialData[0].tx);serialData[0].tx.clear();
     assert(received.back().payload==std::vector<uint8_t>({0}));
+    assert(EarsProtocol::encodeCommand(command,8,EarsProtocol::Command::StartWithKeywords)==8);
+    serialData[0].rx.insert(serialData[0].rx.end(),command,command+8);coreLinkProcessRx();
+    assert(earsIsStreamingToCore() && earsKeywordsEnabled());
+    feed(parser,serialData[0].tx);serialData[0].tx.clear();
+    assert(received.back().payload==std::vector<uint8_t>({1}));
+    assert(EarsProtocol::encodeCommand(command,8,EarsProtocol::Command::Start)==8);
+    serialData[0].rx.insert(serialData[0].rx.end(),command,command+8);coreLinkProcessRx();
+    assert(earsIsStreamingToCore() && !earsKeywordsEnabled());
+    serialData[0].tx.clear();
+    assert(coreLinkForwardEvent(uint8_t(AudioEvent::WAKE_WORD),nullptr,0));
+    assert(!earsKeywordsEnabled()); // A repeat wake cannot undo the playback gate.
+    serialData[0].tx.clear();
     assert(!EarsProtocol::encodeCommand(command,7,EarsProtocol::Command::Start));
     assert(!EarsProtocol::encodeCommand(command,8,EarsProtocol::Command(99)));
     assert(coreLinkForwardEvent(42,pcm,32));feed(parser,serialData[0].tx);

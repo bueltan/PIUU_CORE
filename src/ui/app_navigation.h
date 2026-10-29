@@ -36,3 +36,5 @@ void showServerEditScreen();
  */
 void haltWithUiError();
 void showEyesScreen();
+
+void showVolumeScreen();

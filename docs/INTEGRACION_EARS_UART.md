@@ -36,7 +36,11 @@ el protocolo UDP del servidor, que usa un encabezado de 18 bytes big-endian.
 | EVT! | magic[4], versión u8=1, evento u8, payloadBytes u16 | 0…32 bytes |
 | CMD! | magic[4], versión u8=1, comando u8, payloadBytes u16=0 | ninguno |
 
-CMD START_AUDIO=0x01; STOP_AUDIO=0x02. EARS confirma con EVT
+CMD START_AUDIO=0x01 (CORE solo, KEYWORD pausado); STOP_AUDIO=0x02
+(KEYWORD solo); START_AUDIO_WITH_KEYWORDS=0x03 (ambas rutas). CORE usa
+0x03 mientras escucha/espera y 0x01 durante reproducción/guarda de eco.
+La extensión 0x03 requiere actualizar EARS junto con CORE; se conserva versión
+v1 y payload vacío. EARS confirma con EVT
 CORE_STREAM_STATE=0x80 y un byte 0/1. El ACK es estado del transporte;
 **no termina un turno**, no identifica una sesión ni correlaciona un comando.
 

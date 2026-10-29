@@ -21,3 +21,8 @@
 #ifndef PIUU_CONVERSATION_DIAGNOSTICS
 #define PIUU_CONVERSATION_DIAGNOSTICS 1
 #endif
+
+// Independent of the high-volume network/audio diagnostics.
+#ifndef PIUU_WIFI_DIAGNOSTICS
+#define PIUU_WIFI_DIAGNOSTICS 0
+#endif

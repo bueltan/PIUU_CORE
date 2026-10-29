@@ -15,6 +15,8 @@
 
 #include "ui/screens/ui_start.h"
 #include "ui/screens/ui_setup.h"
+#include "ui/screens/ui_volume.h"
+#include "audio/volume_control.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/screens/ui_wifi_password.h"
 #include "ui/screens/ui_server.h"
@@ -55,8 +57,18 @@ void showSetupScreen()
 }
 
 /**
- * @brief Activates and draws the WiFi network list screen, preparing its editor when applicable.
+ * @brief Opens the live volume control using the current playback target.
  */
+void showVolumeScreen() {
+    uiModel().settingsNotice="";
+    ++uiModel().screenRevision;
+    uiModel().screenEnteredMs=millis();
+    uiModel().screen=SCREEN_VOLUME;
+    uiModel().volumePercent=audioVolumePercent();
+    if (uiModel().volumePercent) uiModel().volumeBeforeMute=uiModel().volumePercent;
+    uiVolumeDrawBase();
+}
+
 void showWifiScreen()
 {
     uiModel().settingsNotice="";

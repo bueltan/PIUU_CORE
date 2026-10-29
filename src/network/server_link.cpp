@@ -10,6 +10,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <esp_system.h>
+#include <esp_mac.h>
 #include <atomic>
 #include <cstring>
 using namespace SessionProtocol;
@@ -74,8 +75,10 @@ bool serverLinkInit() {
     if(!controls || !networkUdpInit(LOCAL_UDP_PORT)) return false;
     if(!configured) {
         uint64_t nonce=uint64_t(esp_random())<<32|esp_random();
+        uint8_t mac[6];
+        if(esp_read_mac(mac,ESP_MAC_WIFI_STA)!=ESP_OK) return false;
         client.setObserver(trace);
-        if(!client.init(nonce?nonce:1,raw)) return false;
+        if(!client.init(nonce?nonce:1,raw,mac)) return false;
         client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;

@@ -7,7 +7,13 @@ uint32_t read32(const uint8_t *p) { return uint32_t(p[0])<<24|uint32_t(p[1])<<16
 void put32(uint8_t *p,uint32_t v) { for(int i=3;i>=0;--i) {p[i]=uint8_t(v);v>>=8;} }
 Kind ack(Kind k) { return k==Kind::Start?Kind::StartAck:k==Kind::Interrupt?Kind::InterruptAck:k==Kind::Played?Kind::PlayedAck:Kind::CancelAck; }
 }
-bool SessionClient::init(uint64_t client,Sender send) {
+bool SessionClient::init(uint64_t client,Sender send,const uint8_t *mac) {
+    hasDeviceMac=mac!=nullptr;
+    if(mac) {
+        uint8_t bits=0;for(unsigned i=0;i<6;++i) bits|=mac[i];
+        if(!bits || (mac[0]&1)) return false;
+        memcpy(deviceMac,mac,sizeof(deviceMac));
+    }
     if(!cache) cache.reset(new(std::nothrow) FramePool{});
     id={client,0,0,0};sender=send;reset();id.client=client?client:1;
     if(!cache) { failed=true;report("CACHE_ALLOC_FAILED",uint32_t(sizeof(FramePool)));return false; }
@@ -92,8 +98,8 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN))) {
-        if(!(packet.flags&2)) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN|CAP_DEVICE_MAC))) {
+        if(!(packet.flags&2) || (hasDeviceMac && !(packet.flags&CAP_DEVICE_MAC))) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
         if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
@@ -172,7 +178,9 @@ void SessionClient::poll(uint32_t now,bool online) {
     if(!helloSent || uint32_t(now-lastHello)>=(established?3000u:500u)) {
         if(++nextRequest==0) ++nextRequest;
         helloRequest=nextRequest;
-        const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,nullptr,0,CAP_EYES_PLAN);
+        const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,
+            hasDeviceMac?deviceMac:nullptr,hasDeviceMac?sizeof(deviceMac):0,
+            CAP_EYES_PLAN|(hasDeviceMac?CAP_DEVICE_MAC:0));
         if(!established) {
             if(!helloAttempts) helloStarted=now;
             ++helloAttempts;
@@ -185,7 +193,7 @@ void SessionClient::poll(uint32_t now,bool online) {
         const auto &saved=eventAcks[lastEvent%16];uint8_t body[4];put32(body,saved.played);
         emit(Kind::EventAck,saved.id,saved.sequence,body,4);awaitingResponseReset=false;
     }
-    if(id.turn && uint32_t(now-lastReceive)>=6000) { report("HEARTBEAT_TIMEOUT",uint32_t(now-lastReceive),uint32_t(now-lastPong));reset();failed=true;return; }
+    if(uint32_t(now-lastReceive)>=6000) { report("HEARTBEAT_TIMEOUT",uint32_t(now-lastReceive),uint32_t(now-lastPong));reset();failed=true;return; }
     if(!pingSent || uint32_t(now-lastPing)>=3000) {
         emit(Kind::Ping,{id.client,id.server,0,0},0,nullptr,0);lastPing=now;pingSent=true;
     }

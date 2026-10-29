@@ -10,6 +10,7 @@
 #include "app/conversation_transport.h"
 #include "network/server_link.h"
 #include "audio/audio_downlink.h"
+#include "audio/volume_control.h"
 #include "app/ears_session.h"
 #include "input/touch_input.h"
 #if PIUU_DIAGNOSTICS
@@ -34,6 +35,9 @@ void setup() {
     initDisplayHardware();
     initTouchHardware();
     if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
+    audioVolumeSetPercent(settings().volumePercent);
+    appLog().printf("[VOLUME] loaded percent=%u gain_q16=%ld\n",
+        audioVolumePercent(), (long)audioVolumeGainQ16());
     conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished});
     appServicesInit();
     eyesInit();

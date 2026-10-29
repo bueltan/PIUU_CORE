@@ -38,6 +38,9 @@ bool conversationInit() {
 }
 ConversationState conversationState() { return machine.state(); }
 bool conversationInputMuted() { return inputMuted; }
+bool conversationKeywordsMuted() {
+    return machine.state()==ConversationState::Playing || resumePending;
+}
 
 bool conversationPostPlaybackEvent(PlaybackEvent event) {
     return events && xQueueSend(events, &event, 0) == pdTRUE;

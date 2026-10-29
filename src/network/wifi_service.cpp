@@ -6,6 +6,7 @@
 #include <cstring>
 #include <type_traits>
 #include "hardware/app_log.h"
+#include "diagnostics/wifi_history.h"
 
 namespace {
 struct WifiRequest { WifiOperation operation; char ssid[33]; char password[65]; };
@@ -15,16 +16,42 @@ QueueHandle_t requests = nullptr, results = nullptr;
 TaskHandle_t worker = nullptr;
 bool busy = false; // Only controller reads/writes this; worker communicates via queues.
 
+// The worker owns explicit connect/scan jobs. Arduino may otherwise start a
+// reconnect from its event task while we are cancelling or scanning.
+class ReconnectPause {
+public:
+    ReconnectPause(): previous(WiFi.getAutoReconnect()) { WiFi.setAutoReconnect(false); }
+    ~ReconnectPause() { WiFi.setAutoReconnect(previous); }
+private:
+    bool previous;
+};
+bool stopAttempt() {
+    if (!WiFi.disconnect(false, false, 1000)) {
+        WifiDiagnostics::record(WifiDiagnostics::Event::SetupFailed, 3);
+        return false;
+    }
+    // Let the intentional disconnect event finish before starting another job.
+    vTaskDelay(pdMS_TO_TICKS(100));
+    return true;
+}
+
 bool connect(const char *ssid, const char *password) {
     if (!ssid[0]) return false;
 #if PIUU_NETWORK_DIAGNOSTICS
     const uint32_t connectStarted=millis();
     appLog().printf("[WIFI_CONNECT t=%lu] phase=begin\n",(unsigned long)connectStarted);
 #endif
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(false, false);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    WiFi.begin(ssid, password);
+    WifiDiagnostics::record(WifiDiagnostics::Event::Attempt, WiFi.status());
+    if (!WiFi.mode(WIFI_STA)) {
+        WifiDiagnostics::record(WifiDiagnostics::Event::SetupFailed, 1);
+        return false;
+    }
+    // Disable power saving before association/DHCP, including the first attempt.
+    if (!WiFi.setSleep(false))
+        WifiDiagnostics::record(WifiDiagnostics::Event::SetupFailed, 2);
+    if (!stopAttempt()) return false;
+    const auto beginStatus = WiFi.begin(ssid, password);
+    WifiDiagnostics::record(WifiDiagnostics::Event::BeginStatus, beginStatus);
     const uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && uint32_t(millis() - start) < 15000)
         vTaskDelay(pdMS_TO_TICKS(50));
@@ -33,39 +60,48 @@ bool connect(const char *ssid, const char *password) {
         (unsigned long)millis(),WiFi.status()==WL_CONNECTED,int(WiFi.status()),
         (unsigned long)uint32_t(millis()-connectStarted));
 #endif
-    if (WiFi.status() != WL_CONNECTED) return false;
-    WiFi.setSleep(false);
-    return true;
+    const bool connected = WiFi.status() == WL_CONNECTED;
+    WifiDiagnostics::record(connected ? WifiDiagnostics::Event::Ready : WifiDiagnostics::Event::Timeout,
+                            WiFi.status(), uint32_t(millis() - start));
+    // A finished UI job must not leave its connection attempt running behind
+    // the next scan or explicit connect. Auto-reconnect resumes after the job.
+    if (!connected) stopAttempt();
+    return connected;
+}
+WifiResult runJob(const WifiRequest &request) {
+    ReconnectPause pause;
+    WifiResult result{};
+    result.operation = request.operation;
+    if (request.operation == WifiOperation::Scan) {
+        WifiDiagnostics::record(WifiDiagnostics::Event::ScanStart, WiFi.status());
+        // Preserve an associated link; stop any offline background attempt
+        // so Arduino's automatic reconnect cannot compete with the scan.
+        const bool modeReady = WiFi.mode(WIFI_STA);
+        if (!modeReady) WifiDiagnostics::record(WifiDiagnostics::Event::SetupFailed, 1);
+        const bool prepared = modeReady && (WiFi.status() == WL_CONNECTED || stopAttempt());
+        const int count = prepared ? WiFi.scanNetworks(false, true) : -2;
+        WifiDiagnostics::record(WifiDiagnostics::Event::ScanEnd, count);
+        result.success = count >= 0;
+        result.scan.count = count > MAX_WIFI_NETWORKS ? MAX_WIFI_NETWORKS : (count > 0 ? count : 0);
+        for (int i = 0; i < result.scan.count; ++i) {
+            const String name = WiFi.SSID(i);
+            name.toCharArray(result.scan.entries[i].ssid, sizeof(result.scan.entries[i].ssid));
+            result.scan.entries[i].rssi = WiFi.RSSI(i);
+        }
+        WiFi.scanDelete();
+    } else {
+        result.success = connect(request.ssid, request.password);
+        memcpy(result.ssid, request.ssid, sizeof(result.ssid));
+        memcpy(result.password, request.password, sizeof(result.password));
+    }
+    result.connected = WiFi.status() == WL_CONNECTED;
+    return result;
 }
 void run(void *) {
-    WifiRequest remembered{};
     for (;;) {
         WifiRequest request{};
         if (xQueueReceive(requests, &request, portMAX_DELAY) != pdTRUE) continue;
-        WifiResult result{};
-        result.operation = request.operation;
-        if (request.operation == WifiOperation::Scan) {
-            const bool restore = WiFi.status() == WL_CONNECTED && remembered.ssid[0];
-            WiFi.mode(WIFI_STA);
-            WiFi.disconnect(false, false);
-            vTaskDelay(pdMS_TO_TICKS(100));
-            const int count = WiFi.scanNetworks(false, true);
-            result.success = count >= 0;
-            result.scan.count = count > MAX_WIFI_NETWORKS ? MAX_WIFI_NETWORKS : (count > 0 ? count : 0);
-            for (int i = 0; i < result.scan.count; ++i) {
-                const String name = WiFi.SSID(i);
-                name.toCharArray(result.scan.entries[i].ssid, sizeof(result.scan.entries[i].ssid));
-                result.scan.entries[i].rssi = WiFi.RSSI(i);
-            }
-            WiFi.scanDelete();
-            if (restore) connect(remembered.ssid, remembered.password);
-        } else {
-            result.success = connect(request.ssid, request.password);
-            memcpy(result.ssid, request.ssid, sizeof(result.ssid));
-            memcpy(result.password, request.password, sizeof(result.password));
-            if (result.success) remembered = request;
-        }
-        result.connected = WiFi.status() == WL_CONNECTED;
+        const WifiResult result = runJob(request); // Reconnect policy restored before publication.
         xQueueSend(results, &result, portMAX_DELAY);
     }
 }
@@ -73,6 +109,7 @@ void run(void *) {
 
 bool wifiServiceStart() {
     if (worker) return true;
+    WifiDiagnostics::begin();
     requests = xQueueCreate(1, sizeof(WifiRequest));
     results = xQueueCreate(1, sizeof(WifiResult));
     if (requests && results && xTaskCreatePinnedToCore(run, "wifiWorker", 6144, nullptr, 1, &worker, 0) == pdPASS) return true;

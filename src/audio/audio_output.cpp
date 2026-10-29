@@ -4,8 +4,11 @@
 #include "config/app_config.h"
 #include "diagnostics/heap_snapshot.h"
 #include <esp_err.h>
+#include <algorithm>
+#include "audio/volume_control.h"
 
 static bool outputInitialized = false;
+static AudioVolumeRamp volumeRamp; // Playback task only.
 
 bool audioOutputInit()
 {
@@ -59,46 +62,45 @@ bool audioOutputInit()
     return true;
 }
 
-// AudioOutputWriteResult audioOutputWrite(const int16_t *pcm, size_t samples)
-// {
-//     size_t bytesWritten = 0;
-//     const esp_err_t error=i2s_write(I2S_DAC_PORT, pcm, samples * sizeof(int16_t), &bytesWritten, portMAX_DELAY);
-//     return {int32_t(error),bytesWritten};
-// }
-
 AudioOutputWriteResult audioOutputWrite(const int16_t *pcm, size_t samples)
 {
-    const size_t chunk = 256;          // tamaño de bloque seguro
+    constexpr size_t chunk = 256;
     size_t bytesWrittenTotal = 0;
     esp_err_t lastError = ESP_OK;
-    
-    // Factor de escala ajustable (ej. 0.25 para reducir al 25% / -12dB, 
-    // o puedes ajustarlo según necesites para evitar la saturación)
-    const float volumeScale = 0.4f; 
-
+#if PIUU_DAC_DIAGNOSTICS
+    static int lastVolume = -1;
+    static unsigned traceChunks = 0;
+#endif
     for (size_t offset = 0; offset < samples; offset += chunk) {
-        size_t n = std::min(chunk, samples - offset);
+        const size_t n = std::min(chunk, samples - offset);
         int16_t scaled[chunk];
-        
-        for (size_t i = 0; i < n; ++i) {
-            // Aplicar escala y asegurar que no haya desbordamiento
-            int32_t val = static_cast<int32_t>(pcm[offset + i] * volumeScale);
-            
-            // Clamping para evitar distorsión digital si excede los límites
-            if (val > 32767)  val = 32767;
-            if (val < -32768) val = -32768;
-            
-            scaled[i] = static_cast<int16_t>(val);
-        }
-        
+        volumeRamp.setTarget(audioVolumeGainQ16());
+        for (size_t i = 0; i < n; ++i)
+            scaled[i] = volumeRamp.apply(pcm[offset + i]);
+
         size_t bytesWritten = 0;
-        lastError = i2s_write(I2S_DAC_PORT,
-                              scaled,
-                              n * sizeof(int16_t),
-                              &bytesWritten,
-                              portMAX_DELAY);
+        lastError = i2s_write(I2S_DAC_PORT, scaled, n * sizeof(int16_t),
+                              &bytesWritten, portMAX_DELAY);
         bytesWrittenTotal += bytesWritten;
-        if (lastError != ESP_OK) break;
+#if PIUU_DAC_DIAGNOSTICS
+        const int volume = int(audioVolumePercent());
+        if (volume != lastVolume) { lastVolume = volume; traceChunks = 3; }
+        if (traceChunks) {
+            --traceChunks;
+            int32_t inputPeak = 0, outputPeak = 0;
+            for (size_t i = 0; i < n; ++i) {
+                const int32_t in = pcm[offset + i], out = scaled[i];
+                inputPeak = std::max(inputPeak, in < 0 ? -in : in);
+                outputPeak = std::max(outputPeak, out < 0 ? -out : out);
+            }
+            appLog().printf("[VOLUME_PCM] percent=%d gain_q16=%ld input_peak=%ld output_peak=%ld bytes=%u error=%ld\n",
+                volume, (long)audioVolumeGainQ16(), (long)inputPeak, (long)outputPeak,
+                unsigned(bytesWritten), (long)lastError);
+        }
+#endif
+        // A short write must not silently skip its unwritten tail and send the
+        // next chunk as though all requested samples had been accepted.
+        if (lastError != ESP_OK || bytesWritten != n * sizeof(int16_t)) break;
     }
     return {int32_t(lastError), bytesWrittenTotal};
 }

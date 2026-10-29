@@ -13,6 +13,8 @@
 #include "ui/app_navigation.h"
 #include "ui/screens/ui_start.h"
 #include "ui/screens/ui_setup.h"
+#include "ui/screens/ui_volume.h"
+#include "audio/volume_control.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/screens/ui_wifi_password.h"
 #include "ui/screens/ui_server.h"
@@ -41,13 +43,12 @@ void pollWifi() {
         if (result.operation == WifiOperation::Connect) {
             if (result.success) {
                 if (!settingsRememberWifi({String(result.ssid), String(result.password)})) saveError();
-            } else uiStatusSetError("WiFi failed", "Check password");
+            } else uiStatusSetError("WiFi failed", "Connection not established");
             if (uiModel().screen == SCREEN_WIFI_PASSWORD && uiModel().screenRevision == connectRevision)
                 showStartScreen();
         }
     }
     appServicesRefreshConnectivity();
-    serverLinkResetHeartbeat();
     uiStatusInvalidate();
 }
 void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
@@ -63,6 +64,7 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
         } break;
     case SCREEN_SETUP:
         switch (uiSetupHandleTouch(x,y,phase)) {
+        case UI_SETUP_ACTION_VOLUME: showVolumeScreen(); break;
         case UI_SETUP_ACTION_WIFI: showWifiScreen(); break;
         case UI_SETUP_ACTION_SERVER:
             uiModel().selectedServer = -1;
@@ -73,12 +75,37 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
         case UI_SETUP_ACTION_TOUCH: appLog().println("[UI] Touch calibration not implemented"); break;
         default: break;
         } break;
+    case SCREEN_VOLUME: {
+        const UiVolumeAction action=uiVolumeHandleTouch(x,y,phase);
+        unsigned value=uiModel().volumePercent;
+        if (action==UI_VOLUME_BACK) {
+            if (settingsSetVolume(value)) showSetupScreen();
+            else {
+                uiModel().settingsNotice="Save failed";
+                uiVolumeDrawBase();
+                appLog().println("[VOLUME] NVS save failed; live volume remains temporary");
+            }
+            break;
+        }
+        if (action==UI_VOLUME_DOWN) value=value>VolumeConfig::Step ? value-VolumeConfig::Step : 0;
+        else if (action==UI_VOLUME_UP) value=value+VolumeConfig::Step>100 ? 100 : value+VolumeConfig::Step;
+        else if (action==UI_VOLUME_MUTE) {
+            if (value) { uiModel().volumeBeforeMute=value; value=0; }
+            else value=uiModel().volumeBeforeMute;
+        } else break;
+        if (value) uiModel().volumeBeforeMute=value;
+        uiModel().volumePercent=value;
+        audioVolumeSetPercent(value);
+        uiModel().settingsNotice="";
+        appLog().printf("[VOLUME] percent=%u gain_q16=%ld\n",value,(long)audioVolumeGainQ16());
+        uiVolumeDrawBase();
+        break;
+    }
     case SCREEN_WIFI:
         switch (uiWifiHandleTouch(x,y,index,phase)) {
         case UI_WIFI_ACTION_BACK: showSetupScreen(); break;
         case UI_WIFI_ACTION_SCAN:
             if (wifiServiceRequestScan()) {
-                conversationAbort();
                 uiModel().wifiScanning=true;
                 uiModel().wifi.count=0;
                 uiModel().selectedWifi=-1;

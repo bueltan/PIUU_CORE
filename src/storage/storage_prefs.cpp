@@ -22,6 +22,8 @@ bool storagePrefsLoad(DeviceSettings &out) {
     out.servers[0] = SERVER_IP;
     out.serverCount = 1;
     if (!prefs.begin("handwalle", true)) return false;
+    const int volume = prefs.getInt("volume_pct", VolumeConfig::DefaultPercent);
+    out.volumePercent = volume >= 0 && volume <= 100 ? uint8_t(volume) : VolumeConfig::DefaultPercent;
     out.wifi.ssid = prefs.getString("wifi_ssid", "");
     out.wifi.password = prefs.getString("wifi_pass", "");
     out.server = prefs.getString("server_ip", SERVER_IP);
@@ -126,6 +128,13 @@ bool storagePrefsClearWifi() {
     ok=put("wifi_ssid","") && ok;
     ok=put("wifi_pass","") && ok;
     if (ok) ok=prefs.putInt("wifi_count",0)==sizeof(int32_t);
+    prefs.end();
+    return ok;
+}
+
+bool storagePrefsSaveVolume(unsigned percent) {
+    if (percent > 100 || !prefs.begin("handwalle", false)) return false;
+    const bool ok = prefs.putInt("volume_pct", int(percent)) == sizeof(int32_t);
     prefs.end();
     return ok;
 }

@@ -36,7 +36,8 @@ bool appServicesStartIfNeeded() {
 }
 
 void appServicesRefreshConnectivity() {
-    const bool connected = wifiServiceConnected() && !wifiServiceBusy();
+    // A scan/job is not a loss of association or IP connectivity.
+    const bool connected = wifiServiceConnected();
     wifiReady = connected;
     if (connected != wasConnected) {
         appLog().printf("[WIFI] Connection %s\n", connected ? "detected" : "lost");
@@ -49,7 +50,7 @@ void appServicesRefreshConnectivity() {
 }
 
 void appServicesPoll() {
-    const bool connected = wifiServiceConnected() && !wifiServiceBusy();
+    const bool connected = wifiServiceConnected();
     if (connected != wasConnected) appServicesRefreshConnectivity();
     wifiReady = connected;
     const bool online = wifiReady && started;

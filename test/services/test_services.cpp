@@ -33,7 +33,8 @@ static UiState drawn=UI_READY;
 static std::vector<std::vector<uint8_t>> sent;
 static std::vector<uint8_t> incoming;
 bool wifiServiceConnected() { return wifi; }
-bool wifiServiceBusy() { return false; }
+static bool wifiBusy=false;
+bool wifiServiceBusy() { return wifiBusy; }
 bool networkUdpInit(uint16_t) { ++binds; return bindOk; }
 void networkUdpLogDiagnostics() {}
 bool networkUdpSendRaw(const char *,uint16_t,const uint8_t *p,size_t n) { sent.emplace_back(p,p+n); return true; }
@@ -54,7 +55,7 @@ static void pong() {
         if(decode(it->data(),it->size(),hello) && hello.kind==Kind::Hello) break;
     }
     uint8_t wire[MAX_PACKET];hello.id.server=42;
-    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,7,hello.id,hello.sequence,nullptr,0});
+    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,7|CAP_DEVICE_MAC,hello.id,hello.sequence,nullptr,0});
     incoming.assign(wire,wire+n);
     uint8_t data[MAX_PACKET];assert(serverLinkParsePacket()==int(n));assert(serverLinkRead(data,sizeof(data))==0);
 }
@@ -98,6 +99,15 @@ int main() {
     uiStatusRefreshStartScreen();assert(drawn==UI_CONNECTING);
     conversationServerEvent(ConversationEvent::Ready,0,0);
     uiStatusRefreshStartScreen();assert(drawn==UI_LISTENING);
+    // A pending scan/job must not simulate WiFi loss, reset UDP identity or
+    // terminate an active conversation while the driver remains connected.
+    const auto scanIdentity=serverLinkIdentity();
+    wifiBusy=true;appServicesPoll();appServicesRefreshConnectivity();conversationPoll();
+    assert(appServicesWifiReady() && appServicesServerReady());
+    assert(serverLinkIdentity().client==scanIdentity.client);
+    assert(conversationState()==ConversationState::Listening);
+    wifiBusy=false;appServicesPoll();
+    assert(serverLinkIdentity().client==scanIdentity.client);
     assert(!conversationStart());
     conversationServerEvent(ConversationEvent::SpeechStopped,0,1);
     {

@@ -8,6 +8,7 @@ namespace SessionProtocol {
 constexpr size_t HEADER_SIZE=38, MAX_BODY=658, MAX_PACKET=HEADER_SIZE+MAX_BODY;
 constexpr uint8_t VERSION=3;
 constexpr uint16_t CAP_EYES_PLAN=0x0004;
+constexpr uint16_t CAP_DEVICE_MAC=0x0008; // HELLO carries six station-MAC bytes.
 enum class Kind : uint8_t {
     Hello=1, HelloAck, Start, StartAck, Commit, CommitAck, Cancel, CancelAck,
     Pcm, Opus, Nack, Missing, Error, Ping, Pong, Event, EventAck, Interrupt, InterruptAck, Played, PlayedAck, DownlinkNack, AudioEnd, AudioEndAck,

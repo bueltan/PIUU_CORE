@@ -5,6 +5,13 @@
 namespace { DeviceSettings active; }
 const DeviceSettings &settings() { return active; }
 bool settingsLoad() { return storagePrefsLoad(active); }
+bool settingsSetVolume(unsigned percent) {
+    if (percent > 100) return false;
+    if (percent == active.volumePercent) return true;
+    if (!storagePrefsSaveVolume(percent)) return false;
+    active.volumePercent = uint8_t(percent);
+    return true;
+}
 bool settingsRememberWifi(const WifiCredentials &credentials) {
     if (!storagePrefsSaveWifiCredential(credentials.ssid, credentials.password)) return false;
     DeviceSettings next = active;

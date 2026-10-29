@@ -1,6 +1,7 @@
 #if PIUU_UDP_LOG
 #include "hardware/udp_log.h"
 #include "diagnostics/log_wire.h"
+#include "diagnostics/wifi_history.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_system.h>
@@ -19,6 +20,7 @@ void worker(void *) {
     WiFiUDP socket; // Never share the audio socket or its mutex.
     const uint32_t boot=esp_random();
     uint32_t sequence=0,lease=0,lastStatus=0;
+    uint64_t wifiCursor=0;
     bool bound=false,subscribed=false;
     IPAddress collector;uint16_t port=0;
     uint8_t packet[LogWire::Header+LogWire::Payload];
@@ -45,6 +47,9 @@ void worker(void *) {
             if(local && n==int(sizeof(LogWire::Subscribe)-1) && read==n &&
                !memcmp(request,LogWire::Subscribe,n) &&
                (!subscribed || (from==collector && sourcePort==port))) {
+                // Lease renewals continue the stream; a new subscription replays
+                // retained Wi-Fi events, even if general logs have overwritten them.
+                if(!subscribed) wifiCursor=0;
                 collector=from;port=sourcePort;subscribed=true;lease=now;
             }
             socket.flush();
@@ -59,12 +64,22 @@ void worker(void *) {
                     unsigned(ESP.getFreeHeap()),unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
                     unsigned(uxTaskGetStackHighWaterMark(nullptr)),(unsigned long)dropped.load());
             }
-            if(status || xQueueReceive(queue,&chunk,0)==pdTRUE) {
+            const uint64_t previousWifiCursor=wifiCursor;
+            bool wifiEvent=false;
+            if(!status) {
+                wifiEvent=WifiDiagnostics::next(wifiCursor,
+                    reinterpret_cast<char*>(chunk.data),sizeof(chunk.data),chunk.ms);
+                if(wifiEvent) chunk.size=strlen(reinterpret_cast<char*>(chunk.data));
+            }
+            if(status || wifiEvent || xQueueReceive(queue,&chunk,0)==pdTRUE) {
                 const size_t size=LogWire::encode(packet,sizeof(packet),chunk.data,chunk.size,
                     boot,++sequence,dropped.load(),chunk.ms);
                 bool ok=socket.beginPacket(collector,port)==1;
                 if(ok) { const size_t written=socket.write(packet,size);const bool sent=socket.endPacket()==1;ok=written==size && sent; }
-                if(!ok) dropped.fetch_add(chunk.size);
+                if(!ok) {
+                    dropped.fetch_add(chunk.size);
+                    if(wifiEvent) wifiCursor=previousWifiCursor;
+                }
             }
         }
         // At most 25 datagrams/s (5.4 kB/s UDP payload including headers).

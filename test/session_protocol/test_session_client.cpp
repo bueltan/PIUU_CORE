@@ -19,7 +19,7 @@ static void startupTrace(const char *event,Identity,uint32_t a,uint32_t b) {
 static Packet last() {Packet p{};assert(decode(sent.back().data(),sent.back().size(),p));return p;}
 static Packet find(Kind k) {for(auto i=sent.rbegin();i!=sent.rend();++i){Packet p{};decode(i->data(),i->size(),p);if(p.kind==k)return p;}assert(false);return {};}
 static void ack(SessionClient &c,Kind request,Kind reply,uint32_t now) {auto p=find(request);p.kind=reply;p.flags=1;p.body=nullptr;p.size=0;c.receive(p,now);}
-static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=3;c.receive(p,now);assert(c.ready(now));}
+static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=find(Kind::Hello);p.kind=Kind::HelloAck;p.id.server=2;p.flags=3|(p.flags&CAP_DEVICE_MAC);p.body=nullptr;p.size=0;c.receive(p,now);assert(c.ready(now));}
 static uint32_t calls=0;
 static bool responseReady=false;
 static bool eventReady() { return responseReady; }
@@ -27,6 +27,11 @@ static uint32_t handleEvent(SessionProtocol::Event,uint32_t,uint32_t) { ++calls;
 static void put32(uint8_t*p,uint32_t n) {for(int i=3;i>=0;--i){p[i]=n;n>>=8;}}
 static void pcm(SessionClient&c,uint32_t seq,uint32_t now) {uint8_t b[658]={};memcpy(b,"PCM!",4);b[4]=1;put32(b+6,seq);put32(b+10,seq*320);b[14]=1;b[15]=64;b[16]=2;b[17]=128;assert(c.sendBody(b,sizeof b,now));}
 int main(int argc,char **argv){
+ if(argc==2 && !strcmp(argv[1],"--hello")) {
+  const uint8_t mac[6]={0x02,0x12,0x34,0x56,0x78,0x9a};
+  SessionClient device;assert(device.init(500,send,mac));device.poll(0,true);
+  fwrite(sent.back().data(),1,sent.back().size(),stdout);return 0;
+ }
  if(argc==2) {
   // Real CORE cache, with 300 ms simulated NACK age; stdout is a v3 PCM datagram.
   SessionClient recovery;recovery.init(40,send);handshake(recovery,0);
@@ -38,6 +43,21 @@ int main(int argc,char **argv){
   recovery.receive(request,300);recovery.poll(300,true);
   assert(recovery.stats().retransmits==1 && last().sequence==0);
   fwrite(sent.back().data(),1,sent.back().size(),stdout);return 0;
+ }
+ // Stable device identity survives session resets, including an idle NAT failure.
+ {
+  const uint8_t mac[6]={0x02,0x12,0x34,0x56,0x78,0x9a};
+  SessionClient device;assert(device.init(500,send,mac));handshake(device,0);
+  auto hello=find(Kind::Hello);assert((hello.flags&CAP_DEVICE_MAC) && hello.size==6 && !memcmp(hello.body,mac,6));
+  const auto old=device.identity();device.poll(6001,true);
+  assert(device.takeFailure() && device.identity().client!=old.client);
+  handshake(device,6501);hello=find(Kind::Hello);
+  assert(!memcmp(hello.body,mac,6));
+  device.reset();device.poll(7000,true);auto reply=find(Kind::Hello);
+  reply.kind=Kind::HelloAck;reply.flags=3;reply.id.server=2;reply.body=nullptr;reply.size=0;
+  device.receive(reply,7001);assert(device.takeFailure() && !device.ready(7001));
+  const uint8_t zero[6]={},multicast[6]={1,2,3,4,5,6};
+  SessionClient invalid;assert(!invalid.init(1,send,zero) && !invalid.init(1,send,multicast));
  }
  // A requested live frame goes ahead of unsent startup frames, within the budget.
  {

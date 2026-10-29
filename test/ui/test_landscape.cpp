@@ -6,6 +6,7 @@
 #include "ui/ui_model.h"
 #include "ui/screens/ui_start.h"
 #include "ui/screens/ui_setup.h"
+#include "ui/screens/ui_volume.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/screens/ui_server.h"
 #include "ui/screens/ui_wifi_password.h"
@@ -37,7 +38,16 @@ int main() {
     assert(uiStartHandleTouch(292,32,TouchPhase::Release)==UI_ACTION_SETUP);
     assert(uiStartHandleTouch(160,194,TouchPhase::Release)==UI_ACTION_MIC);
     uiSetupDrawBase();
-    assert(uiSetupHandleTouch(235,155,TouchPhase::Release)==UI_SETUP_ACTION_BACK);
+    assert(uiSetupHandleTouch(160,204,TouchPhase::Release)==UI_SETUP_ACTION_BACK);
+    assert(uiSetupHandleTouch(85,138,TouchPhase::Release)==UI_SETUP_ACTION_VOLUME);
+    for (unsigned volume : {0u,20u,100u}) { uiModel().volumePercent=volume;uiVolumeDrawBase(); }
+    uiModel().settingsNotice="Save failed";uiVolumeDrawBase();uiModel().settingsNotice="";
+    assert(uiVolumeHandleTouch(65,152,TouchPhase::Press)==UI_VOLUME_NONE);
+    assert(uiVolumeHandleTouch(65,152,TouchPhase::Cancel)==UI_VOLUME_NONE);
+    assert(uiVolumeHandleTouch(65,152,TouchPhase::Release)==UI_VOLUME_DOWN);
+    assert(uiVolumeHandleTouch(255,152,TouchPhase::Release)==UI_VOLUME_UP);
+    assert(uiVolumeHandleTouch(160,152,TouchPhase::Release)==UI_VOLUME_MUTE);
+    assert(uiVolumeHandleTouch(160,210,TouchPhase::Release)==UI_VOLUME_BACK);
     uiModel().wifi.count=7;
     config.serverCount=7;
     for(int i=0;i<7;++i) {std::strcpy(uiModel().wifi.entries[i].ssid,"a-network-name");config.servers[i]="192.168.100.123";}
