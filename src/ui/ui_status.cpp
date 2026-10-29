@@ -12,6 +12,7 @@ static UiState presentedState = UI_READY;
 void uiStatusInvalidate() { dirty = true; }
 static uint32_t errorSince=0;
 static bool explicitError=false;
+static uint32_t presentedCloseSequence=0;
 static void setErrorLines(const char *line1, const char *line2)
 {
     const char *first = line1 ? line1 : "Error";
@@ -30,6 +31,17 @@ void uiStatusSetError(const char *line1, const char *line2) {
 void uiStatusRefreshStartScreen()
 {
     if (uiModel().screen != SCREEN_START) return;
+    const auto closed=conversationLastClose();
+    if(closed.sequence && closed.sequence!=presentedCloseSequence) {
+        presentedCloseSequence=closed.sequence;
+        // Do not resurrect an old notice when returning from another screen.
+        if(conversationState()==ConversationState::Idle && uint32_t(millis()-closed.atMs)<5000 &&
+           closed.reason!=ConversationCloseReason::UserStop &&
+           closed.reason!=ConversationCloseReason::ConfigurationChanged) {
+            uiStatusSetError("Conversation ended",conversationCloseReasonLabel(closed.reason));
+            errorSince=closed.atMs;
+        }
+    }
     UiState state = UI_READY;
     if (explicitError && uint32_t(millis()-errorSince) >= 5000) explicitError=false;
     if (explicitError) state=UI_ERROR;
@@ -45,7 +57,7 @@ void uiStatusRefreshStartScreen()
     } else if (!appServicesServerReady() && conversationState()==ConversationState::Idle) {
         setErrorLines("Server busy", "Finishing conversation...");
         state=UI_ERROR;
-    } else if (conversationState() == ConversationState::Listening) state = UI_LISTENING;
+    } else if (conversationState() == ConversationState::Listening) state = conversationInputStandby() ? UI_STANDBY : UI_LISTENING;
     else if (conversationState() == ConversationState::Connecting) state = UI_CONNECTING;
     else if (conversationState() == ConversationState::WaitingResponse) state = UI_THINKING;
     else if (conversationState() == ConversationState::Playing) state = UI_SPEAKING;
@@ -60,6 +72,7 @@ void uiStatusHandleConversationToggle()
 {
     switch (conversationToggleInput()) {
         case ConversationAction::Started:
+        case ConversationAction::Resumed:
         case ConversationAction::Stopped: explicitError=false; break;
         case ConversationAction::InputUnavailable: uiStatusSetError("EARS unavailable", "Check UART link"); break;
         case ConversationAction::NoWifi: uiStatusSetError("No WiFi", "Open SETUP to connect"); break;

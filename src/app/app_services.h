@@ -9,3 +9,6 @@ bool appServicesReady();
 bool appServicesWifiReady();
 bool appServicesServerReady();
 bool appServicesServerReachable();
+
+// Recent validated traffic; pause silence timeout before the hard link timeout.
+bool appServicesServerResponsive();

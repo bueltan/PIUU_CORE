@@ -26,7 +26,7 @@ void SessionClient::reset() {
     if(++id.client==0) ++id.client;
     id.server=0;id.turn=id.response=0;count=0;established=available=started=helloSent=pingSent=false;
     lastPong=lastReceive=0;awaitingResponseReset=false;if(cache) for(auto &f:*cache) f.valid=false;
-    helloAttempts=0;eyesPlans=false;notificationsEnabled=false;noticeRequest=lastNotice=0;
+    helloAttempts=0;eyesPlans=false;notificationsEnabled=standbyNotificationsEnabled=false;noticeRequest=lastNotice=lastStandbyTurn=0;
 }
 bool SessionClient::reachable(uint32_t now) const { return established && uint32_t(now-lastReceive)<6000; }
 bool SessionClient::ready(uint32_t now) const { return reachable(now) && available; }
@@ -99,13 +99,14 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN|CAP_DEVICE_MAC|CAP_NOTIFICATIONS))) {
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN|CAP_DEVICE_MAC|CAP_NOTIFICATIONS|CAP_STANDBY_NOTIFICATIONS))) {
         if(!(packet.flags&2) || (hasDeviceMac && !(packet.flags&CAP_DEVICE_MAC))) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
         if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
         eyesPlans=(packet.flags&CAP_EYES_PLAN)!=0;
         notificationsEnabled=notificationHandler && (packet.flags&CAP_NOTIFICATIONS);
+        standbyNotificationsEnabled=notificationsEnabled && standbyNotificationHandler && (packet.flags&CAP_STANDBY_NOTIFICATIONS);
         id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("HELLO_READY",available);
         return;
@@ -118,6 +119,18 @@ void SessionClient::receive(const Packet &packet,uint32_t now) {
         return;
     }
     if(packet.kind==Kind::Notice) {
+        if(packet.id.turn) {
+            if(!standbyNotificationsEnabled || packet.flags || packet.size || packet.id.response ||
+               !sameTurn(packet.id,id) || !started || !packet.sequence || !ready(now)) return;
+            lastReceive=now;
+            if(packet.sequence==lastNotice && lastStandbyTurn==id.turn) {
+                emit(Kind::NoticeAck,packet.id,packet.sequence,nullptr,0,1);return;
+            }
+            if(packet.sequence<=lastNotice) return;
+            const bool accepted=!id.response && !count && standbyNotificationHandler();
+            if(accepted) { lastNotice=packet.sequence;lastStandbyTurn=id.turn;report("NOTICE_STANDBY_ACCEPTED",lastNotice); }
+            emit(Kind::NoticeAck,packet.id,packet.sequence,nullptr,0,accepted?1:0);return;
+        }
         if(!notificationsEnabled || packet.flags || packet.size || packet.id.turn || packet.id.response ||
            !packet.sequence || packet.sequence<=lastNotice || id.turn || !ready(now)) return;
         lastReceive=now;noticeRequest=packet.sequence;
@@ -191,7 +204,8 @@ void SessionClient::poll(uint32_t now,bool online) {
         helloRequest=nextRequest;
         const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,
             hasDeviceMac?deviceMac:nullptr,hasDeviceMac?sizeof(deviceMac):0,
-            CAP_EYES_PLAN|(hasDeviceMac?CAP_DEVICE_MAC:0)|(notificationHandler?CAP_NOTIFICATIONS:0));
+            CAP_EYES_PLAN|(hasDeviceMac?CAP_DEVICE_MAC:0)|(notificationHandler?CAP_NOTIFICATIONS:0)|
+            (notificationHandler && standbyNotificationHandler?CAP_STANDBY_NOTIFICATIONS:0));
         if(!established) {
             if(!helloAttempts) helloStarted=now;
             ++helloAttempts;

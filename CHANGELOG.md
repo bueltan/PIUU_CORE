@@ -2,9 +2,19 @@
 
 ## 2026-10-29
 
+- Add negotiated CAP_STANDBY_NOTIFICATIONS=0x0020 and turn-scoped NOTICE/NOTICE_ACK=29 admission so Calendar reminders can reuse a preserved standby session without START/CANCEL, provider reconnect or uplink sequence reset.
+- Reserve only genuine Listening standby, reject active listening/playback and repeat duplicate ACKs without re-admitting. Resume EARS after reminder playback and the existing echo guard; release an unanswered standby reservation after 20 seconds without aborting history. Ordinary late tool responses still leave input paused.
+- Add host coverage for admission/rejection, duplicate/foreign/stale traffic, timeout preservation, playback/input resumption and Python/C++ active-turn wire interoperability. Document server-first deployment and pending live hardware validation.
+- Pass the full CORE host suite, Python/C++ notification interoperability and the cyd-uart0 firmware build; no firmware upload was performed.
+
 - Add bounded playback-stall evidence: prebuffer/jitter state, queue rejection counters, per-response transport admission reasons and the last coherent rejected media identity/sequence, without retaining payloads or changing playback behavior.
 - Capture transport evidence before conversation reset and drain three correlated fault records from the controller at least 100 ms apart; collect compact UDP I/O counters with playback-only diagnostics, independently of verbose network logs.
 - Pass the full host suite, including concurrent rejection snapshots, network/playback/off UDP diagnostics, real transport admission, pre-reset capture, paced fault output and stale failure suppression. Compile cyd-uart0 successfully; firmware upload and hardware reproduction remain pending. Update README with fields, interpretation and EARS capture command.
+
+- Replace silence cancellation with microphone standby after 20 seconds; stop EARS PCM while preserving the transport turn, epoch, PCM sequence, provider session and local wake detection. Resume through wake or MIC without START/INTERRUPT/CANCEL; late tool playback leaves the standby microphone paused.
+- Close after 15 responsive minutes in standby, restarting the budget after each user reactivation. Pause both silence and standby clocks after four seconds without validated traffic; preserve six-second definitive link failure and other error handling.
+- Retain the last active closure reason and diagnostic snapshot in fixed RAM independently of verbose logs; show standby and five-second automatic closure notices on the start screen.
+- Pass the full host suite, including controller diagnostics on/off, standby/resume without sequence reset, queued UART rejection, late tool playback, fifteen-minute expiry/reset, pause/recovery, UI and rollover; compile cyd-uart0 without flashing. Document provider lifetime and Calendar notice limitations, and pending Gemini session resumption.
 
 - Add optional negotiated CAP_NOTIFICATIONS=0x0010 / NOTICE=28 for idle-only backend reminders; CORE chooses the new conversation ID and sends a correlated START.
 - Reject foreign, unnegotiated, busy and duplicate notices; mute microphone input until reminder playback and abort an initial notification response wait after 20 seconds.

@@ -50,15 +50,114 @@ salida espaciada con playback on/off, y callback de fallo ignorando eventos viej
 `cyd-uart0` compiló correctamente. No se cargó firmware; falta reproducir el fallo
 en hardware con esta instrumentación.
 
+## Espera sin audio y cierre por inactividad (2026-10-29)
+
+Después de **20 segundos** sin habla en `Listening`, CORE entra en **Standby**:
+detiene el streaming PCM de EARS y deja de enviar audio al backend, conservando
+la conversación y los mensajes de control/heartbeat. La detección local de la
+palabra de activación permanece habilitada; no se envía audio ambiental durante
+la espera. No se emite CANCEL ni se reinician el turno, el epoch o la secuencia
+PCM. Los frames UART pendientes de la pausa se descartan.
+
+La **palabra de activación o el botón MIC** reactivan el micrófono en esa misma
+conversación. La pantalla muestra `Standby / Wake word or tap MIC`. No se envía un
+INTERRUPT al reanudar; eso evita que Gemini cierre por una interrupción manual
+que no soporta. Una respuesta tardía de una herramienta puede reproducirse, pero
+no reactiva por sí sola el micrófono de una conversación en Standby.
+
+Después de **15 minutos en Standby sin activación del usuario**, CORE cierra la
+sesión con motivo `standby_timeout`. La siguiente activación abre una nueva.
+Reanudar antes del vencimiento cancela ese plazo; al volver a Standby empieza
+otro completo. Los valores se configuran al compilar:
+
+```ini
+-DCONVERSATION_IDLE_TIMEOUT_MS=20000u
+-DCONVERSATION_STANDBY_TIMEOUT_MS=900000u
+```
+
+Agregar esas opciones a los `build_flags` del entorno. El límite de Standby debe ser
+positivo y menor que la mitad del rango de `millis()`.
+
+Ambos contadores usan un reloj de actividad que se **pausa tras 4 segundos sin
+tráfico válido del servidor** y continúa con el tiempo restante cuando vuelve.
+HELLO/PING se envían cada 3 s; se permite 1 s de margen. Los paquetes inválidos o
+de otra sesión no renuevan el reloj. Un backend ocupado que responde no equivale
+a una desconexión.
+
+La pausa no elimina el timeout definitivo del enlace de **6 segundos**, los
+fallos de controles/ACK, la pérdida real de WiFi, los fallos de audio ni el límite
+inicial de 20 s de los recordatorios. Ante esos errores se cierra y la próxima
+activación abre una conversación nueva. El reloj de silencio no se evalúa en
+`WaitingResponse` (Thinking) ni durante reproducción. Se mantiene un watchdog de
+120 s para una detección de habla atascada con energía local continua.
+
+Cada cierre activo conserva un resumen fijo en RAM: motivo, uptime, estado previo,
+epoch, silencio local/del proveedor y estado del micrófono. Las limpiezas en Idle
+no sobrescriben la causa. Se pierde al reiniciar y no se escribe en flash.
+`conversationLastClose()` está disponible con los logs apagados. La pantalla
+inicial muestra `Conversation ended` y el motivo durante cinco segundos; los
+cierres manuales y por cambios de ajustes no generan ese aviso.
+
+Con una salida de logs habilitada se emiten registros compactos, independientes
+de los diagnósticos detallados:
+
+```text
+[MIC_GATE t=...] standby=silence session_preserved=1 provider_quiet_ms=... local_quiet_ms=...
+[MIC_GATE] resumed=user_activation session_preserved=1
+[CONV_TIMER t=...] silence=paused reason=server_traffic
+[CONV_TIMER t=...] silence=resumed reason=server_traffic
+[CONV_CLOSE t=...] reason=standby_timeout state=Listening epoch=... provider_quiet_ms=... local_quiet_ms=... speaking=0 muted=1
+```
+
+En `cyd-uart0` los logs salen por EARS hacia su USB con `PIUU_EARS_LOG=1`. Con
+todas las salidas apagadas, el resumen RAM y el aviso de pantalla siguen funcionando;
+no se envían registros retrospectivos al backend.
+
+**Límites del proveedor:** 15 minutos es la política local máxima de espera, no
+una garantía de duración de Gemini. Google limita la conexión WebSocket a unos
+10 minutos y envía `GoAway`; nuestro backend todavía cierra ante ese evento.
+La compresión de contexto se habilitó en PIUU_SERVER para reducir el crecimiento
+del historial, pero la reanudación de Gemini a través de otra conexión sigue
+pendiente. Los detalles antiguos pueden salir de la ventana de contexto comprimida.
+Ver [gestión de sesiones de Google](https://ai.google.dev/gemini-api/docs/live-api/session-management).
+
+El backend actual ya mantiene la conversación con PING aunque no reciba PCM.
+Los avisos proactivos de Calendar pueden usar la conversación conservada si ambos
+extremos negocian `CAP_STANDBY_NOTIFICATIONS=0x0020` y CORE confirma que sigue en
+Standby. Hablar, esperar una respuesta, reproducir audio o tener herramientas
+pendientes aplaza el aviso. No se cierra Gemini ni se reinicia la secuencia PCM.
+
+Validación: suite host completa con controlador en diagnósticos on/off; pausa,
+reactivación por wake/botón sin CANCEL ni reinicio PCM, respuesta tardía con micrófono
+pausado, cierre exacto tras 15 minutos, reinicio del plazo, reloj congelado sin
+enlace, UI y rollover. Backend: 216 pruebas offline, incluyendo 30 minutos
+simulados de PING sin audio y reanudación del mismo turno. `cyd-uart0` compiló.
+Falta cargar firmware y validar en hardware; no requiere cambiar EARS. Actualizar
+PIUU_SERVER para incorporar la compresión de contexto.
+
 ## Avisos de Calendar desde el backend (2026-10-29)
 
 Nueva capacidad opcional UDP v3 `CAP_NOTIFICATIONS=0x0010` y paquete `NOTICE=28`.
 CORE puede aceptar una solicitud del backend cuando está inactivo y abrir una
 conversación con START correlacionado. El micrófono se silencia durante la apertura
 del recordatorio y retoma la escucha después de reproducirlo. Una conversación
-activa tiene prioridad y no es interrumpida. Los avisos duplicados, de otra sesión
+activa fuera de Standby tiene prioridad y no es interrumpida. Los avisos duplicados, de otra sesión
 o sin capacidad negociada se ignoran; la espera de respuesta inicial tiene un
 límite de 20 segundos.
+
+Para una sesión en Standby, `NOTICE` lleva el turno actual y CORE responde con
+`NOTICE_ACK=29` (cuerpo vacío; flags=1 acepta, 0 difiere). La aceptación reserva
+la sesión con el micrófono pausado; los duplicados sólo repiten el ACK. El servidor
+revalida estado/vigencia, persiste el intento y envía texto a Gemini ya conectado.
+Una activación manual anterior a la aceptación tiene prioridad. Después del aviso
+CORE reactiva EARS con la guarda de eco habitual; una respuesta tardía de una
+herramienta sin esta admisión conserva el micrófono en Standby. Si no llega una
+respuesta inicial en 20 segundos, libera la reserva conservando la sesión.
+
+**Actualizar primero PIUU_SERVER y después CORE**: los servidores anteriores
+rechazan el nuevo bit de HELLO. El servidor actualizado mantiene los avisos desde
+Idle para firmware anterior. Mantener `PIUU_CALENDAR_REMINDERS_ENABLED=1` en el
+servicio. No requiere cambios en EARS/KEYWORD ni carga automática de firmware.
 
 Requiere el backend Calendar con avisos habilitados y cargar este firmware en CORE.
 La capacidad es opcional y no cambia las sesiones manuales. La planificación,

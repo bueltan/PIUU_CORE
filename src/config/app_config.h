@@ -91,8 +91,15 @@ constexpr uint32_t STATS_PERIOD_MS = 2000;
 // - STATS_PERIOD_MS can be lowered while debugging and raised in normal use
 //   to reduce Serial noise.
 #ifndef CONVERSATION_IDLE_TIMEOUT_MS
-#define CONVERSATION_IDLE_TIMEOUT_MS 10000u
+#define CONVERSATION_IDLE_TIMEOUT_MS 20000u
 #endif
+
+// Close the preserved session only after this much responsive standby time.
+#ifndef CONVERSATION_STANDBY_TIMEOUT_MS
+#define CONVERSATION_STANDBY_TIMEOUT_MS (15u * 60u * 1000u)
+#endif
+static_assert(CONVERSATION_STANDBY_TIMEOUT_MS>0 && CONVERSATION_STANDBY_TIMEOUT_MS<0x80000000u,
+              "Standby timeout must be positive and below half the millis range");
 
 #ifndef CONVERSATION_ACTIVITY_LEVEL
 #define CONVERSATION_ACTIVITY_LEVEL 600u

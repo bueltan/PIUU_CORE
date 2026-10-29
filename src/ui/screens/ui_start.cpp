@@ -404,6 +404,10 @@ void uiStartApplyState(UiState state)
         drawStatusText("Ready", "Tap MIC to talk");
         break;
 
+    case UI_STANDBY:
+        drawStatusText("Standby", "Wake word or tap MIC");
+        break;
+
     case UI_LISTENING:
         drawStatusText("Listening", "Tap MIC to close");
         break;

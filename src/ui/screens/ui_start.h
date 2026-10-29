@@ -16,7 +16,8 @@ enum UiState
     UI_CONNECTING,
     UI_THINKING,
     UI_SPEAKING,
-    UI_ERROR
+    UI_ERROR,
+    UI_STANDBY
 };
 
 enum UiStartAction

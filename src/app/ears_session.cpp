@@ -37,11 +37,12 @@ void handleEvent(const EarsEvent &event) {
     // Reject detections already in flight when speaker playback/echo began.
     if(conversationKeywordsMuted()) return;
     if (event.code==uint8_t(EarsProtocol::Event::Wake)) {
-        if(conversationInputMuted()) return; // Speaker audio must not wake/interrupt PIUU.
-        if (conversationState()==ConversationState::Listening || conversationState()==ConversationState::Connecting) return; // Idempotent repeat, preserve turn sequence.
+        if(conversationInputMuted() && !conversationInputStandby()) return; // Speaker audio must not wake/interrupt PIUU.
+        if ((conversationState()==ConversationState::Listening && !conversationInputStandby()) || conversationState()==ConversationState::Connecting) return; // Idempotent repeat, preserve turn sequence.
 
         wakePending=true;wakeOrder=event.order;
-        const bool started=conversationState()==ConversationState::Idle ? conversationStart() : conversationInterrupt();wakePending=false;
+        const bool started=conversationInputStandby() ? conversationResumeInput() :
+            (conversationState()==ConversationState::Idle ? conversationStart() : conversationInterrupt());wakePending=false;
         if (!started) stop(); // EARS enabled streaming itself on wake; reject explicitly.
         notice=started ? EarsSessionNotice::Started : EarsSessionNotice::Rejected;
     } else if (event.code==uint8_t(EarsProtocol::Event::Stop)) {
@@ -52,14 +53,14 @@ void handleEvent(const EarsEvent &event) {
     }
 }
 void handleAudio(const EarsAudioFrame &frame) {
-    if (conversationState()==ConversationState::Idle || int32_t(frame.order-inputAfter)<=0) return;
+    if (conversationState()==ConversationState::Idle || conversationInputStandby() || int32_t(frame.order-inputAfter)<=0) return;
     if (haveSequence) {
         const uint32_t delta=frame.sequence-lastSequence;
         if (!delta) { ++stats.duplicates;return; }
         if (delta>=0x80000000u || delta>251) {
             // UART preserves order. A backwards sequence means EARS restarted
             // or the stream is corrupt; never advance the server by billions.
-            conversationAbort();notice=EarsSessionNotice::Restarted;return;
+            conversationAbort(ConversationCloseReason::EarsRestarted);notice=EarsSessionNotice::Restarted;return;
         }
         if (delta>1) {
             earsLinkRecordConsumerGap(lastSequence+1,frame.sequence,frame.order);
@@ -91,7 +92,7 @@ EarsSessionNotice earsSessionPoll() {
 #endif
     const uint32_t dropped=earsLinkStats().eventDropped;
     if (dropped!=controlDrops) {
-        controlDrops=dropped;conversationAbort();
+        controlDrops=dropped;conversationAbort(ConversationCloseReason::EarsControlLost);
         notice=EarsSessionNotice::ControlLost;appLog().printf("[EARS] abort: event_queue_overflow total=%lu\n",(unsigned long)dropped);
         // Mark the boundary even if the UART worker currently owns the queue
         // mutex. Old events cannot restart the aborted turn on a later poll.
@@ -99,7 +100,7 @@ EarsSessionNotice earsSessionPoll() {
         return notice;
     }
     if (conversationState()!=ConversationState::Idle && !earsLinkPeerOnline()) {
-        appLog().println("[EARS] abort: peer_timeout");conversationAbort();notice=EarsSessionNotice::Offline;
+        appLog().println("[EARS] abort: peer_timeout");conversationAbort(ConversationCloseReason::EarsOffline);notice=EarsSessionNotice::Offline;
     }
     syncKeywords();
     EarsMessage message{};

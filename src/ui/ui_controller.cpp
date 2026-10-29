@@ -126,7 +126,7 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
         case UI_WIFI_PASSWORD_ACTION_BACK: showWifiScreen(); break;
         case UI_WIFI_PASSWORD_ACTION_OK:
             if (wifiServiceRequestConnect(uiModel().wifiDraft)) {
-                conversationAbort();
+                conversationAbort(ConversationCloseReason::ConfigurationChanged);
                 uiModel().wifiConnecting=true;
                 connectRevision=uiModel().screenRevision;
                 uiWifiPasswordDrawBase();
@@ -150,13 +150,13 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
                 const String address=settings().servers[uiModel().selectedServer];
                 const bool active=address==settings().server;
                 if (!settingsRemoveServer(address)) { saveError(); break; }
-                if (active) { conversationAbort(); serverLinkResetHeartbeat(); }
+                if (active) { conversationAbort(ConversationCloseReason::ConfigurationChanged); serverLinkResetHeartbeat(); }
                 uiModel().selectedServer=-1; showServerScreen();
             } break;
         case UI_SERVER_ACTION_OK:
             if (uiModel().selectedServer >= 0 && uiModel().selectedServer < settings().serverCount) {
                 if (!settingsSelectServer(settings().servers[uiModel().selectedServer])) { saveError(); break; }
-                conversationAbort(); serverLinkResetHeartbeat();
+                conversationAbort(ConversationCloseReason::ConfigurationChanged); serverLinkResetHeartbeat();
             }
             showStartScreen(); break;
         default: break;
@@ -168,7 +168,7 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
             const bool active=editingServer.length() && editingServer==settings().server;
             const bool ok=editingServer.length() ? settingsReplaceServer(editingServer,uiModel().serverDraft) : settingsAddServer(uiModel().serverDraft);
             if (!ok) { saveError(); break; }
-            if (active) { conversationAbort(); serverLinkResetHeartbeat(); }
+            if (active) { conversationAbort(ConversationCloseReason::ConfigurationChanged); serverLinkResetHeartbeat(); }
             showServerScreen(); break;
         }
         default: break;

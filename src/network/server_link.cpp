@@ -102,6 +102,7 @@ bool serverLinkInit() {
         client.setObserver(trace);
         if(!client.init(nonce?nonce:1,raw,mac)) return false;
         client.setNotificationHandler(conversationStartNotification);
+        client.setStandbyNotificationHandler(conversationAcceptStandbyNotification);
         client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;
@@ -113,6 +114,7 @@ bool serverLinkAcknowledgeEyesPlan(Identity id,uint32_t sequence) { return clien
 bool serverLinkSend(const uint8_t *data,size_t size) { return initialized && client.sendBody(data,size,millis()); }
 void serverLinkResetHeartbeat() { if(configured) {client.reset();publish();} }
 bool serverLinkReachable() { return initialized && client.reachable(millis()); }
+bool serverLinkResponsive() { return initialized && client.responsive(millis()); }
 bool serverLinkPollHeartbeat(bool online) {
     OwnedControl event{};
     for(int i=0;i<16 && controls && xQueueReceive(controls,&event,0)==pdTRUE;++i)

@@ -14,13 +14,14 @@
 #include <cstdio>
 Logger Serial;
 static uint32_t now=1000,order=0,epoch=0,drops=0;
-static bool peer=false,wifi=true,server=true,ready=true,streaming=false,keywords=true;
+static bool peer=false,wifi=true,server=true,ready=true,streaming=false,keywords=true,responsive=true;
 static std::deque<EarsMessage> incoming;
 static std::vector<bool> commands;
 static std::vector<std::vector<uint8_t>> sent;
 uint32_t millis() { return now; }
 bool appServicesWifiReady() { return wifi; }
 bool appServicesServerReady() { return server; }
+bool appServicesServerResponsive() { return responsive; }
 bool appServicesReady() { return ready; }
 bool audioDownlinkEpochReady() { return true; }
 void audioDownlinkBeginTurn(uint32_t e) { epoch=e; }
@@ -111,17 +112,63 @@ int main() {
     for(unsigned i=0;i<11;++i) { pcm(108+i,800);earsSessionPoll();now+=20; }
     now+=2000;conversationPoll();assert(conversationState()==ConversationState::Listening && streaming);
     conversationServerEvent(ConversationEvent::SpeechStarted,0,2);
-    // Stuck provider speech and steady ambient amplitude must still time out.
+    // Local silence suspends PCM without CANCEL, preserving the uplink timeline.
+    const auto beforeStandbyClose=conversationLastClose().sequence;
+    const auto beforeStandbyCancels=cancels;
     for(unsigned i=0;i<1501;++i) { now+=20;pcm(119+i,300);earsSessionPoll();conversationPoll(); }
-    assert(conversationState()==ConversationState::Idle && !streaming);
-    // Continuous loud noise without provider speech cannot renew the idle timer.
-    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
-    for(unsigned i=0;i<1501;++i) { now+=20;pcm(2000+i,1200);earsSessionPoll();conversationPoll(); }
-    assert(conversationState()==ConversationState::Idle && !streaming);
+    assert(conversationState()==ConversationState::Listening && conversationInputStandby() && !streaming);
+    assert(conversationInputMuted() && !conversationKeywordsMuted());
+    assert(cancels==beforeStandbyCancels && conversationLastClose().sequence==beforeStandbyClose);
+    const auto standbySent=sent.size();const uint32_t lastPcm=be32(sent.back().data()+6);
+    const uint32_t standbyEpoch=epoch;
+    pcm(9000);earsSessionPoll();now+=60000;conversationPoll();
+    assert(sent.size()==standbySent && conversationInputStandby());
+    // A wake resumes the same conversation, without interrupt/cancel or reset.
+    event(1);pcm(9001);assert(earsSessionPoll()==EarsSessionNotice::Started);
+    assert(!conversationInputStandby() && streaming && epoch==standbyEpoch && cancels==beforeStandbyCancels);
+    assert(be32(sent.back().data()+6)==lastPcm+1);
+    // No provider speech: even loud ambient energy eventually suspends input.
+    for(unsigned i=0;i<1501;++i) { now+=20;pcm(9002+i,1200);earsSessionPoll();conversationPoll(); }
+    assert(conversationInputStandby() && !streaming);
+    assert(conversationToggleInput()==ConversationAction::Resumed && streaming);
+    assert(epoch==standbyEpoch && !conversationInputMuted());
+    // A late tool response may speak, but must leave the standby microphone closed.
+    now+=20001;conversationPoll();assert(conversationInputStandby());
+    conversationServerEvent(ConversationEvent::ResponseStarted,2,2);
+    assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Started}));conversationPoll();
+    assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Finished}));conversationPoll();
+    now+=300;conversationPoll();
+    assert(conversationInputStandby() && conversationInputMuted() && !streaming);
+    // A negotiated reminder reuses standby context, then resumes after the echo guard.
+    const auto reminderEpoch=epoch;const auto reminderCancels=cancels;
+    const auto reminderPcm=be32(sent.back().data()+6);
+    assert(conversationAcceptStandbyNotification());
+    assert(!conversationAcceptStandbyNotification() && !conversationResumeInput());
+    assert(conversationInputStandby() && !streaming && epoch==reminderEpoch);
+    conversationServerEvent(ConversationEvent::ResponseStarted,3,2);
+    assert(!conversationAcceptStandbyNotification());
+    assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Started}));conversationPoll();
+    assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Finished}));conversationPoll();
+    assert(conversationInputMuted() && conversationInputStandby() && !streaming);
+    now+=249;conversationPoll();assert(!streaming);
+    now+=2;conversationPoll();assert(streaming && !conversationInputMuted() && !conversationInputStandby());
+    assert(epoch==reminderEpoch+1 && cancels==reminderCancels); // Only the normal response advances playback epoch.
+    assert(!conversationAcceptStandbyNotification()); // Listening is not standby.
+    pcm(12000);earsSessionPoll();assert(be32(sent.back().data()+6)==reminderPcm+1);
+    // Lost/expired admission must release the reservation without closing history.
+    now+=20001;conversationPoll();assert(conversationInputStandby());
+    assert(conversationAcceptStandbyNotification());now+=20000;conversationPoll();
+    assert(conversationInputStandby() && conversationState()==ConversationState::Listening && cancels==reminderCancels);
+    assert(conversationResumeInput());
+    conversationAbort();
+    auto closed=conversationLastClose();
+    assert(closed.reason==ConversationCloseReason::UserStop && closed.state==ConversationState::Listening);
+    conversationAbort();assert(conversationLastClose().sequence==closed.sequence);
     // Stop already has a route during an active listening session, ready for a future model label.
     assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
     earsSessionPoll();assert(keywords);
     event(3);earsSessionPoll();assert(conversationState()==ConversationState::Idle && !streaming && keywords);
+    assert(conversationLastClose().reason==ConversationCloseReason::UserStop);
     // A stuck provider event with continuous energy is bounded by its watchdog.
     assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
     conversationServerEvent(ConversationEvent::SpeechStarted,0,3);
@@ -129,6 +176,7 @@ int main() {
         if(i==2000) assert(conversationState()==ConversationState::Listening);
     }
     assert(conversationState()==ConversationState::Idle && !streaming);
+    assert(conversationLastClose().reason==ConversationCloseReason::SpeechWatchdog);
     const auto count=sent.size();
     // Touch starts explicitly; already queued PCM cannot enter its new turn.
     pcm(200);assert(conversationToggleInput()==ConversationAction::Started && streaming);
@@ -136,10 +184,12 @@ int main() {
     earsSessionPoll();assert(sent.size()==count);
     pcm(201);pcm(201);earsSessionPoll();assert(sent.size()==count+1 && be32(sent.back().data()+6)==0);
     pcm(0);assert(earsSessionPoll()==EarsSessionNotice::Restarted && conversationState()==ConversationState::Idle && !streaming);
+    assert(conversationLastClose().reason==ConversationCloseReason::EarsRestarted);
     assert(conversationStart());pcm(UINT32_MAX);pcm(0);earsSessionPoll();assert(be32(sent.back().data()+6)==1);
     conversationAbort();wifi=false;event(1);assert(earsSessionPoll()==EarsSessionNotice::Rejected && !streaming);
     wifi=true;server=false;event(1);earsSessionPoll();assert(conversationState()==ConversationState::Idle && !streaming);
     server=true;assert(conversationStart());peer=false;assert(earsSessionPoll()==EarsSessionNotice::Offline && !streaming);
+    assert(conversationLastClose().reason==ConversationCloseReason::EarsOffline);
     peer=true;assert(conversationStart());event(1);pcm(1);++drops;
     assert(earsSessionPoll()==EarsSessionNotice::ControlLost && conversationState()==ConversationState::Idle);
     earsSessionPoll();assert(incoming.empty() && conversationState()==ConversationState::Idle);
@@ -148,12 +198,57 @@ int main() {
     now+=340;earsSessionPoll();
     assert(earsSessionStats().pollGapMaxMs>=340);
 #endif
-    peer=true;assert(conversationStart());conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    assert(conversationLastClose().reason==ConversationCloseReason::EarsControlLost);
+    peer=true;assert(conversationStart());wifi=false;conversationPoll();
+    assert(conversationLastClose().reason==ConversationCloseReason::WifiLost);wifi=true;
+    assert(conversationStart());conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
+    const auto waitingSequence=conversationLastClose().sequence;
+    now+=15000;conversationPoll();
+    assert(conversationState()==ConversationState::WaitingResponse && conversationLastClose().sequence==waitingSequence);
     const auto priorFaults=faultReports;
     assert(conversationPostPlaybackEvent({epoch,PlaybackEventKind::Failed}));conversationPoll();
-    assert(faultReports==priorFaults+1 && conversationState()==ConversationState::Idle);
+    assert(faultReports==priorFaults+1);
     assert(conversationPostPlaybackEvent({epoch-1,PlaybackEventKind::Failed}));conversationPoll();
     assert(faultReports==priorFaults+1);
+    assert(conversationLastClose().reason==ConversationCloseReason::PlaybackStalled);
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Closed,0,0);
+    assert(conversationLastClose().reason==ConversationCloseReason::ServerClosed);
+    // Unsigned standby deadline survives millis rollover.
+    now=UINT32_MAX-15000;assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    now+=20001;conversationPoll();
+    assert(conversationInputStandby() && !streaming);
+    conversationAbort();
+    // Only responsive time consumes the 20-second idle allowance.
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    now+=15000;conversationPoll();assert(conversationState()==ConversationState::Listening);
+    responsive=false;conversationPoll();now+=30000;conversationPoll();
+    assert(conversationState()==ConversationState::Listening);
+    responsive=true;conversationPoll();now+=4999;conversationPoll();
+    assert(conversationState()==ConversationState::Listening);
+    now+=2;conversationPoll();assert(conversationInputStandby() && !streaming);
+    responsive=false;assert(!conversationResumeInput() && conversationInputStandby());
+    responsive=true;assert(conversationResumeInput());
+    conversationAbort();
+    // Fifteen responsive minutes in standby close once; an activation renews it.
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    now+=20001;conversationPoll();assert(conversationInputStandby());
+    const auto beforeExpiryCancel=cancels;
+    now+=899999;conversationPoll();assert(conversationInputStandby());
+    assert(conversationResumeInput());now+=20001;conversationPoll();assert(conversationInputStandby());
+    // A mocked outage freezes the idle-session deadline, too. Real link failure
+    // is independently enforced by the transport and is not disabled here.
+    now+=400000;conversationPoll();responsive=false;conversationPoll();
+    now+=600000;conversationPoll();assert(conversationInputStandby());
+    responsive=true;conversationPoll();now+=499999;conversationPoll();assert(conversationInputStandby());
+    now+=1;conversationPoll();assert(conversationState()==ConversationState::Idle);
+    assert(cancels==beforeExpiryCancel+1 && conversationLastClose().reason==ConversationCloseReason::StandbyTimeout);
+    assert(conversationLastClose().muted);
+    const auto expirySequence=conversationLastClose().sequence;
+    conversationPoll();assert(cancels==beforeExpiryCancel+1 && conversationLastClose().sequence==expirySequence);
+    // Idle timeout/recovery works across wall-clock rollover.
+    now=UINT32_MAX-30000;assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    now+=20001;conversationPoll();assert(conversationInputStandby());
+    now+=900000;conversationPoll();assert(conversationLastClose().reason==ConversationCloseReason::StandbyTimeout);
     hostStopWorkers();
     puts("PASS: touch/wake start, ordered PCM/STOP, stale input, sequence gaps/rollover, half-duplex PCM/wake guard and resume, offline/rejected wake and overflow");
 }

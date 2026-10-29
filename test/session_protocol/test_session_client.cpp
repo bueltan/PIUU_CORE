@@ -23,6 +23,9 @@ static void handshake(SessionClient&c,uint32_t now) {c.poll(now,true);auto p=fin
 static SessionClient *noticeClient=nullptr;
 static unsigned noticeCalls=0;
 static bool onNotice() { ++noticeCalls;return noticeClient->beginConversation(); }
+static unsigned standbyCalls=0;
+static bool standbyAllowed=false;
+static bool onStandbyNotice() { ++standbyCalls;return standbyAllowed; }
 static uint32_t calls=0;
 static bool responseReady=false;
 static bool eventReady() { return responseReady; }
@@ -30,6 +33,18 @@ static uint32_t handleEvent(SessionProtocol::Event,uint32_t,uint32_t) { ++calls;
 static void put32(uint8_t*p,uint32_t n) {for(int i=3;i>=0;--i){p[i]=n;n>>=8;}}
 static void pcm(SessionClient&c,uint32_t seq,uint32_t now) {uint8_t b[658]={};memcpy(b,"PCM!",4);b[4]=1;put32(b+6,seq);put32(b+10,seq*320);b[14]=1;b[15]=64;b[16]=2;b[17]=128;assert(c.sendBody(b,sizeof b,now));}
 int main(int argc,char **argv){
+ if(argc==3 && !strcmp(argv[1],"--standby-notice")) {
+  SessionClient device;device.setNotificationHandler(onNotice);device.setStandbyNotificationHandler(onStandbyNotice);
+  assert(device.init(700,send));device.poll(0,true);
+  auto hello=find(Kind::Hello);hello.kind=Kind::HelloAck;hello.id.server=2;
+  hello.flags=3|CAP_NOTIFICATIONS|CAP_STANDBY_NOTIFICATIONS;hello.body=nullptr;hello.size=0;device.receive(hello,0);
+  assert(device.beginConversation());device.poll(1,true);ack(device,Kind::Start,Kind::StartAck,2);
+  std::ifstream file(argv[2],std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+  standbyAllowed=true;Packet notice{};assert(decode(bytes.data(),bytes.size(),notice));device.receive(notice,3);
+  assert(last().kind==Kind::NoticeAck && last().flags==1 && device.identity().turn==1);
+  fwrite(sent.back().data(),1,sent.back().size(),stdout);return 0;
+ }
  if(argc==3 && !strcmp(argv[1],"--notice")) {
   SessionClient device;noticeClient=&device;device.setNotificationHandler(onNotice);
   assert(device.init(700,send));device.poll(0,true);
@@ -80,6 +95,30 @@ int main(int argc,char **argv){
   wake.sequence=11;n.receive(wake,8);assert(noticeCalls==2);
   n.reset();handshake(n,9);wake.id=n.identity();wake.sequence=12;
   n.receive(wake,10);assert(noticeCalls==2); // old backend did not accept capability
+ }
+ // Active notices require CORE standby admission; duplicate ACKs never re-admit.
+ {
+  SessionClient n;n.setNotificationHandler(onNotice);n.setStandbyNotificationHandler(onStandbyNotice);
+  assert(n.init(910,send));n.poll(0,true);auto h=find(Kind::Hello);
+  assert(h.flags&CAP_STANDBY_NOTIFICATIONS);
+  h.kind=Kind::HelloAck;h.id.server=2;h.flags=3|CAP_NOTIFICATIONS|CAP_STANDBY_NOTIFICATIONS;
+  h.body=nullptr;h.size=0;n.receive(h,0);assert(n.beginConversation());
+  n.poll(1,true);ack(n,Kind::Start,Kind::StartAck,2);const auto id=n.identity();
+  Packet notice{Kind::Notice,0,id,20,nullptr,0};
+  n.receive(notice,3);assert(standbyCalls==1 && last().kind==Kind::NoticeAck && !last().flags);
+  standbyAllowed=true;n.receive(notice,4);assert(standbyCalls==2 && last().flags==1);
+  const auto before=sent.size();n.receive(notice,5);assert(standbyCalls==2 && sent.size()==before+1 && last().flags==1);
+  auto bad=notice;bad.sequence++;bad.id.turn++;n.receive(bad,6);assert(standbyCalls==2);
+  bad=notice;bad.sequence++;bad.flags=1;n.receive(bad,6);assert(standbyCalls==2);
+  bad=notice;bad.sequence++;bad.id.response=1;n.receive(bad,6);assert(standbyCalls==2);
+  bad=notice;bad.sequence--;n.receive(bad,6);assert(standbyCalls==2);
+  assert(n.identity().turn==id.turn && n.identity().response==0);
+  uint8_t responseEvent[5]={3,0,0,0,1};auto response=id;response.response=1;
+  n.receive({Kind::Event,0,response,1,responseEvent,5},7);
+  notice.sequence++;n.receive(notice,8);assert(standbyCalls==2 && !last().flags);
+  n.reset();handshake(n,9);assert(n.beginConversation());n.poll(10,true);ack(n,Kind::Start,Kind::StartAck,11);
+  notice.id=n.identity();const auto withoutCapability=sent.size();n.receive(notice,12);
+  assert(standbyCalls==2 && sent.size()==withoutCapability);
  }
  // Stable device identity survives session resets, including an idle NAT failure.
  {
@@ -172,6 +211,8 @@ int main(int argc,char **argv){
  // Busy is reachable but cannot admit START. It is not a transport failure.
  SessionClient busy;busy.init(101,send);handshake(busy,0);
  auto busyId=busy.identity();busy.receive({Kind::Pong,0,{busyId.client,busyId.server,0,0},0,nullptr,0},100);
+ assert(busy.responsive(100));
+ assert(busy.responsive(4099) && !busy.responsive(4100) && busy.reachable(4100));
  assert(busy.reachable(100)&&!busy.ready(100)&&!busy.beginConversation()&&!busy.takeFailure());
  busy.receive({Kind::Pong,1,{busyId.client,busyId.server,0,0},0,nullptr,0},200);assert(busy.ready(200));
  assert(busy.beginConversation());busy.poll(201,true);ack(busy,Kind::Start,Kind::StartAck,202);
@@ -183,7 +224,7 @@ int main(int argc,char **argv){
  busy.poll(6301,true);assert(busy.takeFailure());
  // Unsigned receive ages survive millis rollover.
  SessionClient wrap;wrap.init(102,send);handshake(wrap,UINT32_MAX-100);
- assert(wrap.reachable(50)&&wrap.ready(50));
+ assert(wrap.reachable(50)&&wrap.ready(50)&&wrap.responsive(50));
  SessionClient startup;startup.init(105,startupSend);startup.setObserver(startupTrace);
  startup.poll(100,false);assert(helloLogs==0);
  startup.poll(100,true);assert(helloLogs==1 && helloLocalOk==0);

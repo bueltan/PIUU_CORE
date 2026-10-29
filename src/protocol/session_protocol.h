@@ -9,13 +9,15 @@ constexpr size_t HEADER_SIZE=38, MAX_BODY=658, MAX_PACKET=HEADER_SIZE+MAX_BODY;
 constexpr uint8_t VERSION=3;
 constexpr uint16_t CAP_EYES_PLAN=0x0004;
 constexpr uint16_t CAP_NOTIFICATIONS=0x0010; // Optional idle wake, correlated START.
+constexpr uint16_t CAP_STANDBY_NOTIFICATIONS=0x0020; // Turn-scoped NOTICE / NOTICE_ACK.
 constexpr uint16_t CAP_DEVICE_MAC=0x0008; // HELLO carries six station-MAC bytes.
 enum class Kind : uint8_t {
     Hello=1, HelloAck, Start, StartAck, Commit, CommitAck, Cancel, CancelAck,
     Pcm, Opus, Nack, Missing, Error, Ping, Pong, Event, EventAck, Interrupt, InterruptAck, Played, PlayedAck, DownlinkNack, AudioEnd, AudioEndAck,
     Eyes, // 25: optional best-effort ASCII visual command, no control ACK.
     EyesPlan, EyesPlanAck, // 26/27: immutable playback-timed plan / receipt ACK.
-    Notice // 28: empty session-level wake; CORE chooses the new conversation ID.
+    Notice, // 28: session-level wake or negotiated active-turn standby offer.
+    NoticeAck // 29: empty active-turn standby admission; flags=1 accepts, 0 defers.
 };
 enum class Event : uint8_t { SpeechStarted=1, SpeechStopped, ResponseStarted, Closed, Ready };
 // turn is the conversation ID; response=0 identifies its continuous uplink.

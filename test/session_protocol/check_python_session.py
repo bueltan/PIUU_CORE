@@ -30,4 +30,9 @@ if len(sys.argv)>4:
         start=wire.decode(subprocess.check_output([sys.argv[4],'--notice',str(notice_path)]))
         assert start.kind==wire.Kind.START and start.identity==wire.Identity(700,2,1,0)
         assert int.from_bytes(start.body,'big')==123
+        notice_path.write_bytes(wire.encode(wire.Packet(wire.Kind.NOTICE,0,wire.Identity(700,2,1,0),124)))
+        reply=wire.decode(subprocess.check_output([sys.argv[4],'--standby-notice',str(notice_path)]))
+        assert reply.kind==wire.Kind.NOTICE_ACK and reply.flags==1 and not reply.body
+        assert reply.identity==wire.Identity(700,2,1,0) and reply.sequence==124
     print('PASS: Python NOTICE -> real CORE idle wake -> correlated START roundtrip')
+    print('PASS: Python turn NOTICE -> real CORE standby admission -> NOTICE_ACK without new START')

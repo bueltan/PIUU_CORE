@@ -172,6 +172,22 @@ int main() {
     conversationServerEvent(ConversationEvent::ResponseStarted,1,1);
     assert(sink({epoch,PlaybackEventKind::Failed}));conversationPoll();assert(conversationState()==ConversationState::Idle);
     conversationAbort();
+    uiStatusRefreshStartScreen();
+    assert(drawn==UI_ERROR && uiModel().errorLine1=="Conversation ended");
+    assert(uiModel().errorLine2=="Audio playback stalled");
+    // Returning to the start screen later must not revive an expired closure notice.
+    uiModel().screen=SCREEN_WIFI;now+=5001;
+    pong();appServicesPoll();uiModel().screen=SCREEN_START;
+    uiStatusRefreshStartScreen();assert(drawn==UI_READY);
+    assert(conversationLastClose().reason==ConversationCloseReason::PlaybackStalled);
+    assert(conversationStart());conversationServerEvent(ConversationEvent::Ready,0,0);
+    now+=20001;pong();appServicesPoll();conversationPoll();uiStatusRefreshStartScreen();
+    assert(conversationInputStandby() && drawn==UI_STANDBY);
+    const auto standbyEpoch=epoch;
+    uiStatusHandleConversationToggle();
+    assert(!conversationInputStandby() && drawn==UI_LISTENING && epoch==standbyEpoch);
+    conversationAbort(ConversationCloseReason::ConfigurationChanged);
+    uiStatusRefreshStartScreen();assert(drawn==UI_READY);
 #ifdef PIUU_TEST_CAPTURE_LOG
     // Exercise real media admission, captured pre-reset identity and paced drain.
     pong();appServicesPoll();assert(serverLinkOpenConversation());

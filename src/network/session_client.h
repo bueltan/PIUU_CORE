@@ -7,6 +7,7 @@ class SessionClient {
 public:
     using NotificationHandler=bool(*)();
     void setNotificationHandler(NotificationHandler handler) { notificationHandler=handler; }
+    void setStandbyNotificationHandler(NotificationHandler handler) { standbyNotificationHandler=handler; }
     using EventHandler=uint32_t(*)(SessionProtocol::Event,uint32_t,uint32_t);
     void setEventHandler(EventHandler handler) { eventHandler=handler; }
     void setEventReady(bool (*ready)()) { eventReady=ready; }
@@ -24,6 +25,8 @@ public:
     void reset();
     bool ready(uint32_t now) const;
     bool reachable(uint32_t now) const;
+    // PING/HELLO every 3 seconds: allow 1 second of jitter before pausing idle time.
+    bool responsive(uint32_t now) const { return reachable(now) && receiveAge(now)<4000; }
     void observeMedia(SessionProtocol::Identity identity,uint32_t now);
     uint32_t receiveAge(uint32_t now) const { return uint32_t(now-lastReceive); }
     uint32_t pongAge(uint32_t now) const { return uint32_t(now-lastPong); }
@@ -50,7 +53,10 @@ private:
     Observer observer=nullptr;
     EventHandler eventHandler=nullptr;
     NotificationHandler notificationHandler=nullptr;
+    NotificationHandler standbyNotificationHandler=nullptr;
     bool notificationsEnabled=false;
+    bool standbyNotificationsEnabled=false;
+    uint32_t lastStandbyTurn=0;
     uint32_t noticeRequest=0,lastNotice=0;
     struct EventAck { uint32_t sequence=0,played=0;SessionProtocol::Identity id{}; };
     EventAck eventAcks[16]{};
