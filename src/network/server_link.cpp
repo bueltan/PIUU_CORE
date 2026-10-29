@@ -1,5 +1,6 @@
 #include "network/server_link.h"
 #include "hardware/app_log.h"
+#include "app/device_volume.h"
 #include "network/network_udp.h"
 #include "network/session_client.h"
 #include "protocol/server_protocol.h"
@@ -43,6 +44,15 @@ uint32_t handleEvent(SessionProtocol::Event event,uint32_t response,uint32_t utt
     return conversationServerEvent(ConversationEvent(uint8_t(event)),response,utterance);
 }
 void trace(const char *event,Identity id,uint32_t a,uint32_t b) {
+    if(!strncmp(event,"VOLUME_",7)) {
+#if PIUU_VOLUME_DIAGNOSTICS
+        appLog().printf("[VOLUME_LINK] event=%s c=%08lx%08lx s=%08lx%08lx turn=%lu request=%lu detail=%lu\n",
+            event,(unsigned long)(id.client>>32),(unsigned long)id.client,
+            (unsigned long)(id.server>>32),(unsigned long)id.server,(unsigned long)id.turn,
+            (unsigned long)a,(unsigned long)b);
+#endif
+        return;
+    }
     if(!strcmp(event,"HELLO_SEND") || !strcmp(event,"HELLO_CONNECTED")) {
 #if PIUU_NETWORK_DIAGNOSTICS
         appLog().printf("[CONNECT t=%lu] %s c=%08lx%08lx %s=%lu %s=%lu\n",
@@ -103,6 +113,7 @@ bool serverLinkInit() {
         if(!client.init(nonce?nonce:1,raw,mac)) return false;
         client.setNotificationHandler(conversationStartNotification);
         client.setStandbyNotificationHandler(conversationAcceptStandbyNotification);
+        client.setVolumeHandler(deviceVolumeCommand);
         client.setEventHandler(handleEvent);client.setEventReady(conversationResponseReady);configured=true;publish();
     }
     initialized=true;return true;

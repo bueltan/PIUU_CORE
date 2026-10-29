@@ -3,6 +3,7 @@
 #include <cmath>
 namespace {
 std::atomic<unsigned> percent{VolumeConfig::DefaultPercent};
+std::atomic<unsigned> beforeMute{VolumeConfig::DefaultPercent};
 std::atomic<int32_t> targetGain{audioVolumeGainForPercent(VolumeConfig::DefaultPercent)};
 }
 int32_t audioVolumeGainForPercent(unsigned value) {
@@ -14,9 +15,15 @@ int32_t audioVolumeGainForPercent(unsigned value) {
 }
 bool audioVolumeSetPercent(unsigned value) {
     if (value > 100) return false;
+    if (value) beforeMute.store(value);
     targetGain.store(audioVolumeGainForPercent(value));
     percent.store(value);
     return true;
 }
 unsigned audioVolumePercent() { return percent.load(); }
+unsigned audioVolumeBeforeMute() { return beforeMute.load(); }
+void audioVolumeSetMuted(bool muted) {
+    if (muted) audioVolumeSetPercent(0);
+    else if (!audioVolumePercent()) audioVolumeSetPercent(audioVolumeBeforeMute());
+}
 int32_t audioVolumeGainQ16() { return targetGain.load(); }

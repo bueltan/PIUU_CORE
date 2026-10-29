@@ -2,6 +2,12 @@
 
 ## 2026-10-29
 
+- Add negotiated CAP_VOLUME_CONTROL=0x0040 and VOLUME/VOLUME_ACK=30/31 for controller-owned remote volume query, absolute/relative changes, shared mute restoration and optional NVS persistence. Reuse existing gain ramp and validate session/turn, payload and sequence before executing.
+- Cache the last volume acknowledgement to avoid duplicate relative changes, reject older requests and synchronize the open volume screen with remote updates. Keep local buttons at five points and preserve temporary application when persistence fails.
+- Add host coverage for bounds, invalid payloads, mute restoration, NVS failure, duplicate/stale/foreign packets, controller queue ownership and real Python/C++ volume wire interoperability. Document voice defaults of twenty points and server-first rollout; live Gemini/audio validation remains pending.
+- Add independent PIUU_VOLUME_DIAGNOSTICS for boot/UI/remote volume, persistence results, request rejection/deduplication and ACK send failures. Route through appLog and cover enabled/disabled builds without coupling volume logs to network, playback or DAC diagnostics.
+- Pass the complete host suite, Python/C++ volume and existing transport interoperability, volume diagnostics enabled/disabled checks and cyd-uart0 compilation; the paired backend passes all 251 tests. No firmware upload or live voice/audio validation performed.
+
 - Add negotiated CAP_STANDBY_NOTIFICATIONS=0x0020 and turn-scoped NOTICE/NOTICE_ACK=29 admission so Calendar reminders can reuse a preserved standby session without START/CANCEL, provider reconnect or uplink sequence reset.
 - Reserve only genuine Listening standby, reject active listening/playback and repeat duplicate ACKs without re-admitting. Resume EARS after reminder playback and the existing echo guard; release an unanswered standby reservation after 20 seconds without aborting history. Ordinary late tool responses still leave input paused.
 - Add host coverage for admission/rejection, duplicate/foreign/stale traffic, timeout preservation, playback/input resumption and Python/C++ active-turn wire interoperability. Document server-first deployment and pending live hardware validation.

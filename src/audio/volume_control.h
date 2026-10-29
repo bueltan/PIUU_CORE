@@ -7,6 +7,8 @@
 // Controller publishes the target; only the playback task owns the gain ramp.
 bool audioVolumeSetPercent(unsigned percent);
 unsigned audioVolumePercent();
+unsigned audioVolumeBeforeMute();
+void audioVolumeSetMuted(bool muted);
 int32_t audioVolumeGainQ16();
 int32_t audioVolumeGainForPercent(unsigned percent);
 class AudioVolumeRamp {

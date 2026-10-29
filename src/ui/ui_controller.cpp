@@ -77,27 +77,31 @@ void dispatch(uint16_t x, uint16_t y, TouchPhase phase) {
         } break;
     case SCREEN_VOLUME: {
         const UiVolumeAction action=uiVolumeHandleTouch(x,y,phase);
-        unsigned value=uiModel().volumePercent;
+        unsigned value=audioVolumePercent();
         if (action==UI_VOLUME_BACK) {
             if (settingsSetVolume(value)) showSetupScreen();
             else {
                 uiModel().settingsNotice="Save failed";
                 uiVolumeDrawBase();
-                appLog().println("[VOLUME] NVS save failed; live volume remains temporary");
+#if PIUU_VOLUME_DIAGNOSTICS
+                appLog().println("[VOLUME] source=ui error=save_failed; live volume remains temporary");
+#endif
             }
             break;
         }
         if (action==UI_VOLUME_DOWN) value=value>VolumeConfig::Step ? value-VolumeConfig::Step : 0;
         else if (action==UI_VOLUME_UP) value=value+VolumeConfig::Step>100 ? 100 : value+VolumeConfig::Step;
         else if (action==UI_VOLUME_MUTE) {
-            if (value) { uiModel().volumeBeforeMute=value; value=0; }
-            else value=uiModel().volumeBeforeMute;
+            audioVolumeSetMuted(value!=0);
+            value=audioVolumePercent();
         } else break;
         if (value) uiModel().volumeBeforeMute=value;
         uiModel().volumePercent=value;
         audioVolumeSetPercent(value);
         uiModel().settingsNotice="";
-        appLog().printf("[VOLUME] percent=%u gain_q16=%ld\n",value,(long)audioVolumeGainQ16());
+#if PIUU_VOLUME_DIAGNOSTICS
+        appLog().printf("[VOLUME] source=ui percent=%u gain_q16=%ld\n",value,(long)audioVolumeGainQ16());
+#endif
         uiVolumeDrawBase();
         break;
     }
@@ -182,6 +186,13 @@ void uiControllerInit() {
 }
 void uiControllerPoll() {
     pollWifi();
+    // Remote commands run on this same controller task, before UI polling.
+    if(uiModel().screen==SCREEN_VOLUME && uiModel().volumePercent!=audioVolumePercent()) {
+        uiModel().volumePercent=audioVolumePercent();
+        uiModel().volumeBeforeMute=audioVolumeBeforeMute();
+        uiModel().settingsNotice="";
+        uiVolumeDrawBase();
+    }
     static TouchGesture gesture;
     static EyesHold hold;
     TouchEvent event{};

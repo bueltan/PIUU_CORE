@@ -2,6 +2,7 @@
 #include "config/settings.h"
 #include "ui/ui_model.h"
 #include "audio/audio_downlink.h"
+#include "audio/volume_control.h"
 
 #include "app/conversation.h"
 #include "app/conversation_event.h"
@@ -20,6 +21,7 @@ static uint32_t now=1000;
 uint32_t millis() { return now; }
 static DeviceSettings config;
 const DeviceSettings &settings() { return config; }
+bool settingsSetVolume(unsigned value) { if(value>100)return false;config.volumePercent=value;return true; }
 static uint32_t epoch=0;
 static PlaybackEventSink sink=nullptr;
 void audioDownlinkSetEventSink(PlaybackEventSink value) { sink=value; }
@@ -58,7 +60,7 @@ static void pong() {
         if(decode(it->data(),it->size(),hello) && hello.kind==Kind::Hello) break;
     }
     uint8_t wire[MAX_PACKET];hello.id.server=42;
-    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,7|CAP_DEVICE_MAC,hello.id,hello.sequence,nullptr,0});
+    const auto n=encode(wire,sizeof(wire),{Kind::HelloAck,7|CAP_DEVICE_MAC|CAP_VOLUME_CONTROL,hello.id,hello.sequence,nullptr,0});
     incoming.assign(wire,wire+n);
     uint8_t data[MAX_PACKET];assert(serverLinkParsePacket()==int(n));assert(serverLinkRead(data,sizeof(data))==0);
 }
@@ -123,6 +125,25 @@ int main() {
         auto size=encode(wire,sizeof(wire),{Kind::Event,0,identity,1,event,5});
         incoming.assign(wire,wire+size);serverLinkRead(out,sizeof(out));appServicesPoll();
         assert(serverLinkIdentity().response==1 && serverLinkEyesPlansEnabled());
+        // RX only queues volume; the controller applies it and confirms once.
+        auto volumeIdentity=serverLinkIdentity();volumeIdentity.response=0;
+        audioVolumeSetPercent(60);
+        const uint8_t volumeCommand[]={2,uint8_t(-20),0};
+        size=encode(wire,sizeof(wire),{Kind::Volume,0,volumeIdentity,1,volumeCommand,3});
+        incoming.assign(wire,wire+size);assert(!serverLinkRead(out,sizeof(out)));
+        assert(audioVolumePercent()==60);
+        appServicesPoll();assert(audioVolumePercent()==40);
+        Packet volumeAck{};assert(decode(sent.back().data(),sent.back().size(),volumeAck));
+        assert(volumeAck.kind==Kind::VolumeAck && volumeAck.body[1]==40);
+        incoming.assign(wire,wire+size);serverLinkRead(out,sizeof(out));appServicesPoll();
+        assert(audioVolumePercent()==40);
+#if PIUU_VOLUME_DIAGNOSTICS
+        assert(Serial.output.find("[VOLUME_LINK] event=VOLUME_DUPLICATE")!=std::string::npos);
+        assert(Serial.output.find("[VOLUME] source=remote")!=std::string::npos);
+#else
+        assert(Serial.output.find("[VOLUME_LINK]")==std::string::npos);
+        assert(Serial.output.find("[VOLUME]")==std::string::npos);
+#endif
         const uint8_t plan[]={1,1,0,0,1,7,4,0xb0,0,0,0,0};
         const auto deliverPlan=[&](Kind kind,Identity id,uint32_t seq) {
             size=encode(wire,sizeof(wire),{kind,0,id,seq,plan,sizeof(plan)});

@@ -5,6 +5,8 @@
 // Controller-owned transport state; the RX worker hands controls through a queue.
 class SessionClient {
 public:
+    using VolumeHandler=void(*)(const uint8_t*,uint8_t*);
+    void setVolumeHandler(VolumeHandler handler) { volumeHandler=handler; }
     using NotificationHandler=bool(*)();
     void setNotificationHandler(NotificationHandler handler) { notificationHandler=handler; }
     void setStandbyNotificationHandler(NotificationHandler handler) { standbyNotificationHandler=handler; }
@@ -50,6 +52,10 @@ private:
     uint8_t deviceMac[6]{};
     bool hasDeviceMac=false;
     Sender sender=nullptr;
+    VolumeHandler volumeHandler=nullptr;
+    bool volumeEnabled=false;
+    uint32_t lastVolumeRequest=0;
+    uint8_t lastVolumeBody[3]{},lastVolumeReply[4]{};
     Observer observer=nullptr;
     EventHandler eventHandler=nullptr;
     NotificationHandler notificationHandler=nullptr;

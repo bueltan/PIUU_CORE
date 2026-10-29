@@ -27,6 +27,7 @@ void SessionClient::reset() {
     id.server=0;id.turn=id.response=0;count=0;established=available=started=helloSent=pingSent=false;
     lastPong=lastReceive=0;awaitingResponseReset=false;if(cache) for(auto &f:*cache) f.valid=false;
     helloAttempts=0;eyesPlans=false;notificationsEnabled=standbyNotificationsEnabled=false;noticeRequest=lastNotice=lastStandbyTurn=0;
+    volumeEnabled=false;lastVolumeRequest=0;
 }
 bool SessionClient::reachable(uint32_t now) const { return established && uint32_t(now-lastReceive)<6000; }
 bool SessionClient::ready(uint32_t now) const { return reachable(now) && available; }
@@ -99,16 +100,36 @@ bool SessionClient::sendBody(const uint8_t *body,size_t size,uint32_t now) {
 }
 void SessionClient::receive(const Packet &packet,uint32_t now) {
     if(packet.id.client!=id.client) return;
-    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN|CAP_DEVICE_MAC|CAP_NOTIFICATIONS|CAP_STANDBY_NOTIFICATIONS))) {
+    if(packet.kind==Kind::HelloAck && packet.id.server && packet.sequence==helloRequest && packet.id.turn==0 && packet.id.response==0 && packet.size==0 && !(packet.flags&~uint16_t(3|CAP_EYES_PLAN|CAP_DEVICE_MAC|CAP_NOTIFICATIONS|CAP_STANDBY_NOTIFICATIONS|CAP_VOLUME_CONTROL))) {
         if(!(packet.flags&2) || (hasDeviceMac && !(packet.flags&CAP_DEVICE_MAC))) { report("INCOMPATIBLE_SERVER",packet.flags);reset();failed=true;return; }
         if(established && id.server!=packet.id.server) { reset();failed=true;return; }
         const bool changed=!established || available!=bool(packet.flags&1);
         if(!established) report("HELLO_CONNECTED",uint32_t(now-helloStarted),helloAttempts);
         eyesPlans=(packet.flags&CAP_EYES_PLAN)!=0;
+        volumeEnabled=volumeHandler && (packet.flags&CAP_VOLUME_CONTROL);
         notificationsEnabled=notificationHandler && (packet.flags&CAP_NOTIFICATIONS);
         standbyNotificationsEnabled=notificationsEnabled && standbyNotificationHandler && (packet.flags&CAP_STANDBY_NOTIFICATIONS);
         id.server=packet.id.server;established=true;available=(packet.flags&1)!=0;lastPong=lastReceive=now;
         if(changed) report("HELLO_READY",available);
+        return;
+    }
+    if(packet.kind==Kind::Volume) {
+        const uint32_t rejection=!volumeEnabled?1:packet.flags?2:
+            (!sameTurn(packet.id,id) || packet.id.response)?3:
+            (packet.size!=3 || !packet.body)?4:
+            (!packet.sequence || packet.sequence<lastVolumeRequest)?5:0;
+        if(rejection) { reportFor("VOLUME_REJECTED",packet.id,packet.sequence,rejection);return; }
+        if(packet.sequence==lastVolumeRequest) {
+            if(memcmp(packet.body,lastVolumeBody,3)) { reportFor("VOLUME_REJECTED",packet.id,packet.sequence,6);return; }
+            reportFor("VOLUME_DUPLICATE",packet.id,packet.sequence);
+        } else {
+            memcpy(lastVolumeBody,packet.body,3);
+            volumeHandler(packet.body,lastVolumeReply);
+            lastVolumeRequest=packet.sequence;
+        }
+        lastReceive=now;
+        const bool sent=emit(Kind::VolumeAck,packet.id,packet.sequence,lastVolumeReply,4);
+        reportFor(sent?"VOLUME_ACK_SENT":"VOLUME_ACK_FAILED",packet.id,packet.sequence,lastVolumeReply[0]);
         return;
     }
     if(!sameSession(packet.id,id)) return;
@@ -205,7 +226,8 @@ void SessionClient::poll(uint32_t now,bool online) {
         const bool ok=emit(Kind::Hello,{id.client,0,0,0},helloRequest,
             hasDeviceMac?deviceMac:nullptr,hasDeviceMac?sizeof(deviceMac):0,
             CAP_EYES_PLAN|(hasDeviceMac?CAP_DEVICE_MAC:0)|(notificationHandler?CAP_NOTIFICATIONS:0)|
-            (notificationHandler && standbyNotificationHandler?CAP_STANDBY_NOTIFICATIONS:0));
+            (notificationHandler && standbyNotificationHandler?CAP_STANDBY_NOTIFICATIONS:0)|
+            (volumeHandler?CAP_VOLUME_CONTROL:0));
         if(!established) {
             if(!helloAttempts) helloStarted=now;
             ++helloAttempts;

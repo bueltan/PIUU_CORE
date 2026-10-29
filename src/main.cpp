@@ -36,8 +36,10 @@ void setup() {
     initTouchHardware();
     if (!settingsLoad()) appLog().println("[CONFIG] NVS unavailable; using defaults");
     audioVolumeSetPercent(settings().volumePercent);
+#if PIUU_VOLUME_DIAGNOSTICS
     appLog().printf("[VOLUME] loaded percent=%u gain_q16=%ld\n",
         audioVolumePercent(), (long)audioVolumeGainQ16());
+#endif
     conversationSetTransportPort({serverLinkOpenConversation,serverLinkCloseConversation,serverLinkTakeFailure,audioDownlinkPlayedMs,serverLinkInterrupt,serverLinkPlaybackFinished,serverLinkLogPlaybackFault});
     appServicesInit();
     eyesInit();

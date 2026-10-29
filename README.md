@@ -549,6 +549,63 @@ transiciones, entrada sin modificar y escrituras parciales/fallidas. También se
 verifican botones dentro de 320×240 y persistencia, valores inválidos y fallos de
 NVS. Falta escuchar y medir en el PCM5102 real.
 
+### Control remoto por voz mediante Device MCP
+
+El backend puede consultar, fijar, incrementar o silenciar este mismo volumen
+mediante **MCP stdio → WebSocket local → UDP v3**. Activar
+`PIUU_DEVICE_MCP_ENABLED=1` en PIUU_SERVER; ver
+[configuración y ejemplos](../PIUU_SERVER/README.md#control-de-volumen-de-core-mediante-device-mcp-2026-10-29).
+«Hablá más despacio» baja 20 puntos y «hablá más fuerte» sube 20. Una cantidad
+explícita reemplaza ese paso; «poné al 30 %» fija 30. En esta integración
+«despacio» controla volumen y no velocidad. Una frase con dos referencias a la
+misma bajada debe producir un solo ajuste. La interpretación depende de Gemini;
+las pruebas offline verifican sus instrucciones, sin probar reconocimiento real.
+
+CORE anuncia `CAP_VOLUME_CONTROL=0x0040` y sólo acepta `VOLUME=30` si el servidor
+negocia esa capacidad. Procesa los tres bytes (operación, valor firmado,
+persistencia) en la tarea principal mediante la cola de controles; el worker RX
+no modifica el volumen ni escribe NVS. `VOLUME_ACK=31` confirma estado, nivel
+aplicado, nivel de restauración y nivel guardado. La identidad de sesión/turno,
+longitud, flags e identificador se validan antes de ejecutar. Los reintentos del
+último identificador repiten la respuesta sin aplicar otra vez el delta; comandos
+anteriores se descartan y la deduplicación se reinicia con la sesión.
+
+Pantalla y red comparten el último nivel no nulo para mute/unmute. Si VOLUME
+está abierta, refleja el cambio remoto en el siguiente ciclo de UI y BACK guarda
+el nivel vigente. Los botones siguen usando pasos de 5. Los pedidos remotos no
+escriben flash salvo `set_volume(..., persist=true)`; si el guardado falla, el
+ajuste sigue aplicado temporalmente y el ACK informa ese fallo.
+
+Actualizar primero PIUU_SERVER y después CORE: el servidor actualizado admite
+CORE antiguo sin volumen remoto; el servidor antiguo rechaza la nueva capacidad
+HELLO. Las pruebas host incluyen duplicados, límites, mute compartido, fallos de
+persistencia, cola RX/controlador y comandos/ACK Python↔C++. La validación audible
+y por voz en la placa queda pendiente de despliegue.
+
+Los logs de este grupo tienen un interruptor propio en `platformio.ini`:
+
+```ini
+-DPIUU_VOLUME_DIAGNOSTICS=1
+```
+
+Cambiarlo a `0` elimina los mensajes `[VOLUME]` y `[VOLUME_LINK]`, incluidos los
+del arranque y de la pantalla, sin desactivar el control de volumen. No depende
+de `PIUU_DIAGNOSTICS`, `PIUU_NETWORK_DIAGNOSTICS`, `PIUU_PLAYBACK_DIAGNOSTICS` ni
+`PIUU_DAC_DIAGNOSTICS`; usa el destino habitual configurado (EARS, UDP, SD o
+consola). El proyecto lo habilita por defecto; el fallback del header es 0.
+
+`[VOLUME] source=remote` informa operación, valor, persistencia, estado y niveles
+vivo/restaurable/guardado. Estado 0 confirma aplicación, 1 indica argumentos
+inválidos y 2 fallo de guardado con nivel temporal aplicado. `[VOLUME_LINK]`
+correlaciona sesión, turno e identificador con `VOLUME_DUPLICATE`,
+`VOLUME_ACK_SENT`, `VOLUME_ACK_FAILED` o `VOLUME_REJECTED`. En rechazo, `detail`
+vale 1 para capacidad no habilitada, 2 flags inválidos, 3 identidad/turno,
+4 longitud/cuerpo, 5 secuencia antigua/cero y 6 identificador reutilizado con
+otro comando. Los filtros previos del RX pueden descartar paquetes ajenos antes
+de estos eventos. Un ACK enviado no garantiza que haya llegado al servidor.
+El análisis por bloque `[VOLUME_PCM]` conserva su interruptor separado
+`PIUU_DAC_DIAGNOSTICS`.
+
 ## Conversation inactivity
 
 CORE closes a listening conversation after `CONVERSATION_IDLE_TIMEOUT_MS=10000`
