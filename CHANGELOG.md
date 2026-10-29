@@ -2,6 +2,11 @@
 
 ## 2026-10-29
 
+- Fix false playback stalls caused by sampling millis() before the jitter snapshot: freeze response expectation/activity and sample the clock last under the jitter mutex. Use the same local timing values for the completion decision and idle_ms diagnostics.
+- Add playback-local rollover-aware elapsed arithmetic that clamps a concurrently newer reference to zero; apply it to the stall watchdog and trailing-END recovery grace without changing configured deadlines or buffer sizes.
+- Add regressions for the observed 1–2 ms timestamp races, initial buffering, first-packet wait, rebuffering, real timeout/grace boundaries and rollover. Record option 4 (playback as sole owner of timing state, with bounded events from RX/controller) in README as a future alternative if similar coordination failures recur; it is not implemented by this fix.
+- Reproduce the regression against the original code, then pass the updated completion tests, full host suite, Python/C++ transport interoperability and cyd-uart0 build. Firmware upload and live reproduction of the reported cuts remain pending.
+
 - Add negotiated CAP_VOLUME_CONTROL=0x0040 and VOLUME/VOLUME_ACK=30/31 for controller-owned remote volume query, absolute/relative changes, shared mute restoration and optional NVS persistence. Reuse existing gain ramp and validate session/turn, payload and sequence before executing.
 - Cache the last volume acknowledgement to avoid duplicate relative changes, reject older requests and synchronize the open volume screen with remote updates. Keep local buttons at five points and preserve temporary application when persistence fails.
 - Add host coverage for bounds, invalid payloads, mute restoration, NVS failure, duplicate/stale/foreign packets, controller queue ownership and real Python/C++ volume wire interoperability. Document voice defaults of twenty points and server-first rollout; live Gemini/audio validation remains pending.

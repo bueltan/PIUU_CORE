@@ -1,5 +1,48 @@
 # PIUU_CORE
 
+## Corrección del falso timeout de reproducción (2026-10-29)
+
+Las capturas de las 13:20:49 y 13:24:47 mostraron `playback_stalled` al iniciar
+una respuesta, con 27 y 8 paquetes ya en cola e `idle_ms=4294967295/4294967294`.
+Reproducción consultaba `millis()` antes de tomar el mutex de jitter; recepción
+podía actualizar la hora del último paquete mientras tanto. Una marca 1–2 ms
+posterior al reloj leído se convertía en casi 49 días al restar sin signo y
+provocaba el cierre de la conversación. El segundo corte ocurrió después de un
+ajuste de volumen confirmado; el primero ocurrió antes de usar Device MCP.
+
+Se aplica la opción 3 acordada: lectura temporal coherente más comparación
+protegida. Reproducción captura el estado de jitter, la expectativa de respuesta
+y la referencia de actividad antes de consultar el reloj, todavía dentro del
+mutex. La decisión y el log `idle_ms` usan los mismos valores locales, sin volver
+a leer la referencia después. `PlaybackTiming::elapsed()` admite el rollover
+normal de `millis()` y trata una referencia concurrente ligeramente futura como
+antigüedad cero. El criterio presupone intervalos menores que medio ciclo de
+32 bits (aproximadamente 24,9 días); los plazos de reproducción son muy inferiores.
+
+La misma protección se aplica a la espera de recuperación de paquetes finales
+(`playbackCanDrainEnd()`), para que un END más reciente no agote esa espera antes
+de tiempo. Se conservan el timeout de 10 segundos, la espera final configurada,
+los tamaños de buffer y el cierre explícito ante un bloqueo real. La corrección
+no resuelve por sí sola pérdida de medios ni otros motivos de `playback_stalled`.
+Las pruebas host reproducen los desfases de 1–2 ms, espera del primer paquete,
+rebuffer, límites reales de timeout/recuperación y rollover. La reproducción en
+placa requiere recompilar/cargar CORE y repetir la captura; no necesita cambios
+en PIUU_SERVER ni EARS.
+
+### Alternativa futura: opción 4, un único dueño del estado temporal
+
+Si reaparecen problemas similares pese a estas lecturas y comparaciones
+protegidas, evaluar que la tarea de reproducción sea la única dueña de los
+tiempos y decisiones de reproducción. Recepción y controlador comunicarían
+eventos de llegada, END, expectativa de respuesta y cambio de epoch mediante
+una cola acotada, en lugar de actualizar directamente ese estado compartido.
+
+Esta alternativa queda registrada como posible refactorización, no implementada.
+Antes de adoptarla hay que definir orden de eventos, descarte de epochs antiguos,
+tratamiento de saturación y prioridad de controles; medir latencia y capacidad
+para no retrasar recepción, recuperación ni reproducción. No debe sustituir el
+diagnóstico de un corte concreto sin evidencia de otra carrera entre tareas.
+
 ## Diagnóstico de bloqueo de audio (2026-10-29)
 
 Con `PIUU_PLAYBACK_DIAGNOSTICS=1` (ya activado en `platformio.ini`), un fallo de

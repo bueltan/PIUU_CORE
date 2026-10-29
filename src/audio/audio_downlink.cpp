@@ -714,12 +714,11 @@ static void playbackTask(void *parameter)
             if (!finishReported && eventSink && uint32_t(millis()-lastMediaWriteMs)>=128) finishReported = eventSink({epoch, PlaybackEventKind::Finished});
             continue;
         }
-        bool started, rebuf, seenEnd;
-        uint32_t expSeq, hiSeq, eSeq, lastPktMs, consecMiss, endAt;
+        bool started, rebuf, seenEnd, waiting;
+        uint32_t expSeq, hiSeq, eSeq, lastActivityMs, consecMiss, endAt, nowMs;
         int buffered = 0;
         uint32_t minSeq = 0;
         bool foundMin = false;
-        uint32_t nowMs = millis();
         AUDIO_PHASE(Jitter);
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
@@ -730,10 +729,15 @@ static void playbackTask(void *parameter)
             expSeq = expectedSeq;
             hiSeq = highestSeqSeen;
             eSeq = endSeq;endAt=endReceivedMs;
-            lastPktMs = lastPacketMillis;
             consecMiss = consecutiveMisses;
             buffered = countBufferedPacketsNoLock();
             foundMin = (buffered > 0) ? getMinBufferedSeqNoLock(minSeq) : false;
+            // Read activity before the clock, while RX cannot update jitter
+            // timestamps. Freeze the no-packet fallback and waiting flag too;
+            // decision and diagnostics must use the same timing snapshot.
+            waiting = expectResponse.load();
+            lastActivityMs = lastPacketMillis ? lastPacketMillis : responseExpectedAt.load();
+            nowMs = millis();
             xSemaphoreGive(jitterMutex);
         }
         else
@@ -741,8 +745,9 @@ static void playbackTask(void *parameter)
             continue;
         }
 
+        const uint32_t idleMs=PlaybackTiming::elapsed(nowMs,lastActivityMs);
         const auto completion=playbackCompletion(seenEnd,expSeq,eSeq,buffered,
-            expectResponse.load(),nowMs,lastPktMs?lastPktMs:responseExpectedAt.load(),RESPONSE_STALL_TIMEOUT_MS,
+            waiting,nowMs,lastActivityMs,RESPONSE_STALL_TIMEOUT_MS,
             (rebuf || !started) && !seenEnd && buffered<(started?REBUFFER_PACKETS:START_BUFFERED_PACKETS));
 #if PIUU_PERFORMANCE_DIAGNOSTICS
         if (completion!=PlaybackCompletion::Pending && xSemaphoreTake(jitterMutex,portMAX_DELAY)==pdTRUE) {
@@ -759,7 +764,7 @@ static void playbackTask(void *parameter)
                 appLog().printf("[PLAYBACK] stalled epoch=%lu seq=%lu high=%lu queued=%d needed=%d started=%d rebuf=%d end=%d final=%lu idle_ms=%lu\n",
                     (unsigned long)epoch,(unsigned long)expSeq,(unsigned long)hiSeq,buffered,
                     started?REBUFFER_PACKETS:START_BUFFERED_PACKETS,started,rebuf,seenEnd,(unsigned long)eSeq,
-                    (unsigned long)(nowMs-(lastPktMs?lastPktMs:responseExpectedAt.load())));
+                    (unsigned long)idleMs);
                 finished=finishReported=true;expectResponse.store(false);
             }
             continue;
